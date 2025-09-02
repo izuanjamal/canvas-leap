@@ -148,6 +148,49 @@ export const boardSync = api.streamInOut<BoardSyncHandshake, UnifiedClientMessag
     await broadcastToBoard(boardId, joinMessage, stream);
     await broadcastToBoard(boardId, presenceEvent, stream);
 
+    // Send existing strokes to the connected client
+    try {
+      const existing = await boardDB.queryAll<{
+        id: string;
+        board_id: string;
+        user_id: string;
+        path_data: any;
+        color: string;
+        thickness: number;
+        created_at: Date;
+      }>`
+        SELECT id, board_id, user_id, path_data, color, thickness, created_at
+        FROM strokes
+        WHERE board_id = ${boardId}
+        ORDER BY created_at ASC
+      `;
+      console.log(`[BoardSync] Sending ${existing.length} persisted strokes to user ${auth.userID}`);
+      for (const s of existing) {
+        const ev: UnifiedServerMessage = {
+          eventType: "DRAW",
+          userId: s.user_id,
+          payload: {
+            stroke: {
+              id: s.id, // client may ignore
+              userId: s.user_id,
+              color: s.color,
+              width: s.thickness,
+              mode: s.path_data?.mode ?? "draw",
+              points: s.path_data?.points ?? [],
+            },
+          },
+        };
+        try {
+          await stream.send(ev);
+        } catch (err) {
+          console.error("[BoardSync] Failed sending persisted stroke:", err);
+          break;
+        }
+      }
+    } catch (err) {
+      console.error("[BoardSync] Failed to load persisted strokes:", err);
+    }
+
     // Heartbeat: update last_seen every 10 seconds and clean up inactive users
     const heartbeat = startHeartbeat(stream, session);
 
@@ -275,14 +318,32 @@ async function handleBoardEvent(
     case "DRAW": {
       console.log(`[BoardSync] Broadcasting DRAW event from ${session.userId} to board ${session.boardId}`);
 
+      // Save stroke to DB if provided
+      const stroke = message.payload?.stroke;
+      if (stroke && Array.isArray(stroke.points)) {
+        try {
+          await boardDB.exec`
+            INSERT INTO strokes (board_id, user_id, path_data, color, thickness)
+            VALUES (
+              ${session.boardId},
+              ${session.userId},
+              ${JSON.stringify({ points: stroke.points, mode: stroke.mode ?? "draw" })},
+              ${String(stroke.color || "#000000")},
+              ${Number.isFinite(stroke.width) ? Math.max(1, Math.min(64, Math.floor(stroke.width))) : 2}
+            )
+          `;
+        } catch (err) {
+          console.error("[BoardSync] Failed to persist stroke:", err);
+        }
+      }
+
       // Enhance payload with user info
       const enhancedEvent: UnifiedServerMessage = {
         eventType: "DRAW",
         userId: session.userId,
         payload: {
           ...message.payload,
-          displayName: session.displayName,
-          avatarUrl: session.avatarUrl,
+          // keep original stroke structure
           timestamp: Date.now(),
         },
       };
@@ -351,6 +412,7 @@ async function handleBoardEvent(
         },
       };
       await broadcastToBoard(session.boardId, clearEvent, senderStream);
+      // Note: We do not delete strokes from DB automatically on CLEAR to preserve history.
       break;
     }
 
@@ -379,7 +441,7 @@ async function handleClientMessage(
     case "BOARD_UPDATE": {
       console.log(`[BoardSync] Broadcasting BOARD_UPDATE from ${session.userId} to board ${boardId}`);
 
-      // Save board data to database
+      // Save board data to database (legacy)
       await boardDB.exec`
         UPDATE boards
         SET data = ${JSON.stringify(data)}

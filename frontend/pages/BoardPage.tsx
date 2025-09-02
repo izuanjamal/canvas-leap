@@ -1,35 +1,47 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
 import { Topbar } from "../components/Topbar";
 import { useCanvasStore } from "../state/canvasStore";
-import { loadInitialBoard } from "../services/boardLoader";
-import { initialBoardId } from "../config";
-import WhiteboardCanvas, { type WhiteboardCanvasHandle } from "../components/WhiteboardCanvas";
+import WhiteboardCanvas, { type WhiteboardCanvasHandle, type Stroke as CanvasStroke } from "../components/WhiteboardCanvas";
 import DrawingToolbar, { type ToolKind } from "../components/DrawingToolbar";
+import { getBackendClient } from "../lib/backendClient";
+import type { BoardWithStrokes, Stroke as BackendStroke } from "~backend/board/types";
 
 export function BoardPage() {
-  const setBoard = useCanvasStore((s) => s.setBoardFromData);
+  const { id } = useParams<{ id: string }>();
+  const setBoardMeta = useCanvasStore((s) => s.setBoardMeta);
   const boardName = useCanvasStore((s) => s.boardName);
 
   // Drawing controls state (lifted to parent)
   const [color, setColor] = useState("#0ea5e9");
   const [size, setSize] = useState(4);
   const [tool, setTool] = useState<ToolKind>("pen");
+  const [initialStrokes, setInitialStrokes] = useState<CanvasStroke[] | null>(null);
 
   const canvasRef = useRef<WhiteboardCanvasHandle | null>(null);
 
-  // Load board on mount.
+  // Load board and strokes on mount.
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const board = await loadInitialBoard(initialBoardId);
-      if (!mounted) return;
-      setBoard(board.id, board.name, board.data);
-      document.title = `${board.name} • CanvasLeap`;
+      if (!id) return;
+      try {
+        const backend = getBackendClient();
+        const resp: BoardWithStrokes = await backend.board.get({ id });
+        if (!mounted) return;
+        setBoardMeta(resp.board.id, resp.board.title);
+        document.title = `${resp.board.title} • CanvasLeap`;
+
+        const strokes: CanvasStroke[] = resp.strokes.map(mapBackendStrokeToCanvas);
+        setInitialStrokes(strokes);
+      } catch (err) {
+        console.error("Failed to load board", err);
+      }
     })();
     return () => {
       mounted = false;
     };
-  }, [setBoard]);
+  }, [id, setBoardMeta]);
 
   const appTitle = useMemo(() => boardName || "CanvasLeap", [boardName]);
 
@@ -47,6 +59,7 @@ export function BoardPage() {
           strokeColor={tool === "eraser" ? color /* unused in erase mode */ : color}
           brushSize={size}
           tool={tool}
+          initialStrokes={initialStrokes ?? undefined}
         />
 
         {/* Floating drawing toolbar */}
@@ -67,4 +80,17 @@ export function BoardPage() {
       </div>
     </div>
   );
+}
+
+function mapBackendStrokeToCanvas(s: BackendStroke): CanvasStroke {
+  const points = Array.isArray(s.path_data?.points) ? s.path_data.points : [];
+  const mode = s.path_data?.mode === "erase" ? "erase" : "draw";
+  return {
+    id: s.id,
+    userId: s.user_id,
+    color: s.color || "#000000",
+    width: s.thickness || 2,
+    mode,
+    points: points.map((p: any) => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 })),
+  };
 }

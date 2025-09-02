@@ -24,6 +24,8 @@ export interface WhiteboardCanvasProps {
   strokeColor: string;
   brushSize: number;
   tool: ToolKind;
+  // Optional initial strokes to bootstrap the canvas.
+  initialStrokes?: Stroke[];
 }
 
 export interface WhiteboardCanvasHandle {
@@ -76,7 +78,7 @@ type RemoteCursor = {
 };
 
 const WhiteboardCanvas = React.forwardRef<WhiteboardCanvasHandle, WhiteboardCanvasProps>(function WhiteboardCanvas(
-  { strokeColor, brushSize, tool }: WhiteboardCanvasProps,
+  { strokeColor, brushSize, tool, initialStrokes }: WhiteboardCanvasProps,
   ref
 ) {
   const { sendCursor, sendDraw, sendClear, addEventListener } = useBoardSocket();
@@ -85,6 +87,17 @@ const WhiteboardCanvas = React.forwardRef<WhiteboardCanvasHandle, WhiteboardCanv
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const undoStackRef = useRef<Stroke[]>([]);
   const redoStackRef = useRef<Stroke[]>([]);
+
+  // Apply initial strokes when provided
+  useEffect(() => {
+    if (initialStrokes && initialStrokes.length >= 0) {
+      setStrokes(initialStrokes);
+      undoStackRef.current = [...initialStrokes];
+      redoStackRef.current = [];
+      requestRedraw();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(initialStrokes?.map((s) => s.id))]);
 
   // Current drawing in-progress
   const drawingRef = useRef<{
@@ -267,7 +280,7 @@ const WhiteboardCanvas = React.forwardRef<WhiteboardCanvasHandle, WhiteboardCanv
       // Clear redo stack on new action
       redoStackRef.current = [];
 
-      // Send after each stroke
+      // Send after each stroke (persisted by backend via websocket)
       try {
         await sendDraw({ stroke });
       } catch (err) {
@@ -363,7 +376,7 @@ const WhiteboardCanvas = React.forwardRef<WhiteboardCanvasHandle, WhiteboardCanv
     const unsubscribe = addEventListener((ev) => {
       switch (ev.type) {
         case "DRAW": {
-          // Expect payload.stroke from other users
+          // Expect payload.stroke from other users or bootstrap
           const stroke: Stroke | undefined = ev.payload?.stroke;
           if (stroke && stroke.points?.length > 1) {
             setStrokes((prev) => {

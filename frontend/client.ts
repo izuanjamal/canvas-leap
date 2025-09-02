@@ -173,6 +173,7 @@ export namespace auth {
  * Import the endpoint handlers to derive the types for the client.
  */
 import { create as api_board_create_create } from "~backend/board/create";
+import { createStroke as api_board_create_stroke_createStroke } from "~backend/board/create_stroke";
 import { createUser as api_board_create_user_createUser } from "~backend/board/create_user";
 import { get as api_board_get_get } from "~backend/board/get";
 import { list as api_board_list_list } from "~backend/board/list";
@@ -186,6 +187,7 @@ export namespace board {
         constructor(baseClient: BaseClient) {
             this.baseClient = baseClient
             this.create = this.create.bind(this)
+            this.createStroke = this.createStroke.bind(this)
             this.createUser = this.createUser.bind(this)
             this.get = this.get.bind(this)
             this.list = this.list.bind(this)
@@ -193,12 +195,21 @@ export namespace board {
         }
 
         /**
-         * Creates a new whiteboard with the given name and optional initial data.
+         * Creates a new whiteboard with a title.
          */
         public async create(params: RequestType<typeof api_board_create_create>): Promise<ResponseType<typeof api_board_create_create>> {
             // Now make the actual call to the API
             const resp = await this.baseClient.callTypedAPI(`/boards`, {method: "POST", body: JSON.stringify(params)})
             return JSON.parse(await resp.text(), dateReviver) as ResponseType<typeof api_board_create_create>
+        }
+
+        /**
+         * Saves a new stroke to the board.
+         */
+        public async createStroke(params: RequestType<typeof api_board_create_stroke_createStroke>): Promise<ResponseType<typeof api_board_create_stroke_createStroke>> {
+            // Now make the actual call to the API
+            const resp = await this.baseClient.callTypedAPI(`/strokes`, {method: "POST", body: JSON.stringify(params)})
+            return JSON.parse(await resp.text(), dateReviver) as ResponseType<typeof api_board_create_stroke_createStroke>
         }
 
         /**
@@ -212,7 +223,7 @@ export namespace board {
         }
 
         /**
-         * Retrieves a board by its ID, including all board data and metadata.
+         * Retrieves a board by its ID, including all strokes and metadata.
          */
         public async get(params: { id: string }): Promise<ResponseType<typeof api_board_get_get>> {
             // Now make the actual call to the API
@@ -221,7 +232,7 @@ export namespace board {
         }
 
         /**
-         * Retrieves all boards ordered by most recently updated.
+         * Retrieves boards for the current user, ordered by most recently created.
          */
         public async list(params: RequestType<typeof api_board_list_list>): Promise<ResponseType<typeof api_board_list_list>> {
             // Convert our params into the objects we need for the request

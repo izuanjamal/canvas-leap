@@ -26,6 +26,7 @@ interface CanvasState {
   cursors: Cursor[];
 
   // Actions
+  setBoardMeta: (id: string, name: string) => void;
   setBoardFromData: (id: string, name: string, data: BoardData) => void;
   applyRemoteBoardData: (data: BoardData) => void;
   toBoardData: () => BoardData;
@@ -61,6 +62,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   isPanning: false,
 
   cursors: [],
+
+  setBoardMeta: (id, name) => set({ boardId: id, boardName: name }),
 
   setBoardFromData: (id, name, data) => {
     const elements: Record<string, BoardElement> = {};

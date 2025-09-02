@@ -1,10 +1,9 @@
 import React, { useEffect, useMemo } from "react";
-import { Toolbar } from "../components/Toolbar";
-import { Canvas } from "../components/Canvas/Canvas";
 import { Topbar } from "../components/Topbar";
 import { useCanvasStore } from "../state/canvasStore";
 import { loadInitialBoard } from "../services/boardLoader";
 import { initialBoardId } from "../config";
+import WhiteboardCanvas from "../components/WhiteboardCanvas";
 
 export function BoardPage() {
   const setBoard = useCanvasStore((s) => s.setBoardFromData);
@@ -29,11 +28,8 @@ export function BoardPage() {
   return (
     <div className="h-full w-full flex flex-col overflow-hidden">
       <Topbar title={appTitle} />
-      <div className="flex flex-1 overflow-hidden">
-        <Toolbar />
-        <div className="flex-1">
-          <Canvas />
-        </div>
+      <div className="flex-1 overflow-hidden">
+        <WhiteboardCanvas />
       </div>
     </div>
   );

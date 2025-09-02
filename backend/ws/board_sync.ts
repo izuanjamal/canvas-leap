@@ -4,7 +4,7 @@ import { getAuthData } from "~encore/auth";
 
 // Enhanced event types for real-time collaboration
 export interface BoardEvent {
-  type: "DRAW" | "CURSOR" | "PRESENCE" | "PING";
+  type: "DRAW" | "CURSOR" | "PRESENCE" | "PING" | "CLEAR";
   userId: string;
   payload?: any;
 }
@@ -32,9 +32,9 @@ export interface UnifiedClientMessage {
   boardId?: string;
   data?: any;
   timestamp?: number;
-  
+
   // New BoardEvent fields
-  eventType?: "DRAW" | "CURSOR" | "PRESENCE" | "PING";
+  eventType?: "DRAW" | "CURSOR" | "PRESENCE" | "PING" | "CLEAR";
   userId?: string;
   payload?: any;
 }
@@ -46,9 +46,9 @@ export interface UnifiedServerMessage {
   userId?: string;
   data?: any;
   timestamp?: number;
-  
+
   // New BoardEvent fields
-  eventType?: "DRAW" | "CURSOR" | "PRESENCE" | "PING";
+  eventType?: "DRAW" | "CURSOR" | "PRESENCE" | "PING" | "CLEAR";
   payload?: any;
 }
 
@@ -60,9 +60,12 @@ export interface BoardSession {
   lastSeen: Date;
 }
 
+// Helper alias to simplify nested generics
+type BoardStream = StreamInOut<UnifiedClientMessage, UnifiedServerMessage>;
+
 // Store active connections per board
-const boardConnections = new Map<string, Set<StreamInOut<UnifiedClientMessage, UnifiedServerMessage>>>();
-const sessionData = new Map<StreamInOut<UnifiedClientMessage, UnifiedServerMessage>, BoardSession>();
+const boardConnections = new Map<string, Set<BoardStream>>();
+const sessionData = new Map<BoardStream, BoardSession>();
 const connectedUsers = new Map<string, Map<string, { displayName: string; avatarUrl: string; lastPing: Date }>>();
 
 interface BoardSyncHandshake {
@@ -182,7 +185,7 @@ function startHeartbeat(
       if (users) {
         const now = new Date();
         const inactiveUsers: string[] = [];
-        
+
         for (const [userId, user] of users.entries()) {
           if (now.getTime() - user.lastPing.getTime() > 30000) {
             inactiveUsers.push(userId);
@@ -192,7 +195,7 @@ function startHeartbeat(
         for (const userId of inactiveUsers) {
           console.log(`[BoardSync] Removing inactive user ${userId} from board ${session.boardId}`);
           users.delete(userId);
-          
+
           // Broadcast user left
           const presenceEvent: UnifiedServerMessage = {
             eventType: "PRESENCE",
@@ -232,7 +235,7 @@ async function handleMessage(
   console.log(`[BoardSync] Received message from ${session.userId}:`, message);
 
   // Handle new BoardEvent format (check for eventType field)
-  if (message.eventType && ['DRAW', 'CURSOR', 'PRESENCE', 'PING'].includes(message.eventType)) {
+  if (message.eventType && ["DRAW", "CURSOR", "PRESENCE", "PING", "CLEAR"].includes(message.eventType)) {
     await handleBoardEvent(message, senderStream, session);
     return;
   }
@@ -253,7 +256,7 @@ async function handleBoardEvent(
   session: BoardSession
 ): Promise<void> {
   const eventType = message.eventType!;
-  
+
   // Update last seen timestamp
   session.lastSeen = new Date();
   await boardDB.exec`
@@ -271,7 +274,7 @@ async function handleBoardEvent(
   switch (eventType) {
     case "DRAW": {
       console.log(`[BoardSync] Broadcasting DRAW event from ${session.userId} to board ${session.boardId}`);
-      
+
       // Enhance payload with user info
       const enhancedEvent: UnifiedServerMessage = {
         eventType: "DRAW",
@@ -283,14 +286,14 @@ async function handleBoardEvent(
           timestamp: Date.now(),
         },
       };
-      
+
       await broadcastToBoard(session.boardId, enhancedEvent, senderStream);
       break;
     }
 
     case "CURSOR": {
       console.log(`[BoardSync] Broadcasting CURSOR event from ${session.userId}`);
-      
+
       // Enhance payload with user info
       const enhancedEvent: UnifiedServerMessage = {
         eventType: "CURSOR",
@@ -302,14 +305,14 @@ async function handleBoardEvent(
           timestamp: Date.now(),
         },
       };
-      
+
       await broadcastToBoard(session.boardId, enhancedEvent, senderStream);
       break;
     }
 
     case "PRESENCE": {
       console.log(`[BoardSync] Handling PRESENCE event from ${session.userId}:`, message.payload);
-      
+
       if (message.payload?.action === "leave") {
         await cleanupConnection(senderStream, session);
       }
@@ -318,12 +321,12 @@ async function handleBoardEvent(
 
     case "PING": {
       console.log(`[BoardSync] Received PING from ${session.userId}`);
-      
+
       // Update user's last ping time
       if (users && users.has(session.userId)) {
         users.get(session.userId)!.lastPing = new Date();
       }
-      
+
       // Send pong response
       const pongEvent: UnifiedServerMessage = {
         eventType: "PING",
@@ -334,6 +337,20 @@ async function handleBoardEvent(
         },
       };
       await senderStream.send(pongEvent);
+      break;
+    }
+
+    case "CLEAR": {
+      console.log(`[BoardSync] Broadcasting CLEAR event on board ${session.boardId} by ${session.userId}`);
+
+      const clearEvent: UnifiedServerMessage = {
+        eventType: "CLEAR",
+        userId: session.userId,
+        payload: {
+          timestamp: Date.now(),
+        },
+      };
+      await broadcastToBoard(session.boardId, clearEvent, senderStream);
       break;
     }
 
@@ -361,7 +378,7 @@ async function handleClientMessage(
   switch (type) {
     case "BOARD_UPDATE": {
       console.log(`[BoardSync] Broadcasting BOARD_UPDATE from ${session.userId} to board ${boardId}`);
-      
+
       // Save board data to database
       await boardDB.exec`
         UPDATE boards
@@ -383,7 +400,7 @@ async function handleClientMessage(
 
     case "CURSOR_UPDATE": {
       console.log(`[BoardSync] Broadcasting CURSOR_UPDATE from ${session.userId}`);
-      
+
       // Broadcast cursor movement to other clients (don't save to DB)
       const cursorMessage: UnifiedServerMessage = {
         type: "CURSOR_UPDATE",
@@ -410,13 +427,13 @@ async function handleClientMessage(
 
     case "PING": {
       console.log(`[BoardSync] Received legacy PING from ${session.userId}`);
-      
+
       // Update user's last ping time
       const users = connectedUsers.get(session.boardId);
       if (users && users.has(session.userId)) {
         users.get(session.userId)!.lastPing = new Date();
       }
-      
+
       // Respond with PONG to keep connection alive
       const pongMessage: UnifiedServerMessage = {
         type: "PONG",

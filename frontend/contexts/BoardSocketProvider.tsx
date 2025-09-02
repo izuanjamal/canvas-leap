@@ -8,10 +8,12 @@ import { useToast } from "@/components/ui/use-toast";
 
 // BoardEvent interface required by spec
 export interface BoardEvent {
-  type: "DRAW" | "CURSOR" | "PRESENCE" | "PING";
+  type: "DRAW" | "CURSOR" | "PRESENCE" | "PING" | "CLEAR";
   userId: string;
   payload?: any;
 }
+
+type EventListener = (event: BoardEvent) => void;
 
 interface BoardSocketContextValue {
   connected: boolean;
@@ -20,6 +22,8 @@ interface BoardSocketContextValue {
   sendCursor: (x: number, y: number) => Promise<void>;
   sendDraw: (payload: any) => Promise<void>;
   sendPresence: (action: "join" | "leave") => Promise<void>;
+  sendClear: () => Promise<void>;
+  addEventListener: (fn: EventListener) => () => void;
 }
 
 const BoardSocketContext = createContext<BoardSocketContextValue | null>(null);
@@ -40,6 +44,9 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
 
   // Keep local map of cursors for efficient updates
   const cursorsRef = useRef<Map<string, Cursor>>(new Map());
+
+  // External listeners for all board events
+  const listenersRef = useRef<Set<EventListener>>(new Set());
 
   const cleanup = useCallback(async () => {
     try {
@@ -166,9 +173,22 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
     }
   };
 
+  const notifyListeners = (ev: BoardEvent) => {
+    for (const fn of listenersRef.current) {
+      try {
+        fn(ev);
+      } catch (err) {
+        console.error("BoardSocket listener error", err);
+      }
+    }
+  };
+
   const handleIncomingMessage = (msg: UnifiedServerMessage) => {
     const ev = toBoardEvent(msg);
     if (!ev) return;
+
+    // Notify subscribers first
+    notifyListeners(ev);
 
     switch (ev.type) {
       case "CURSOR": {
@@ -217,7 +237,7 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
         break;
       }
       case "DRAW": {
-        // If the payload contains boardData, apply it
+        // If the payload contains boardData, apply it (legacy Canvas)
         const boardData: BoardData | undefined = ev.payload?.boardData;
         if (boardData) {
           setIsApplyingRemote(true);
@@ -230,6 +250,7 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
         }
         break;
       }
+      case "CLEAR":
       case "PING":
       default:
         break;
@@ -243,8 +264,6 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
     const msg: UnifiedClientMessage = {
       // @ts-expect-error eventType is used by backend
       eventType: event.type,
-      // optional legacy mapping if needed:
-      // type: event.type === "CURSOR" ? "CURSOR_UPDATE" : undefined,
       payload: event.payload,
       userId: event.userId,
     } as any;
@@ -275,6 +294,21 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
     });
   }, [sendEvent]);
 
+  const sendClear = useCallback(async () => {
+    await sendEvent({
+      type: "CLEAR",
+      userId: "",
+      payload: {},
+    });
+  }, [sendEvent]);
+
+  const addEventListener = useCallback((fn: EventListener) => {
+    listenersRef.current.add(fn);
+    return () => {
+      listenersRef.current.delete(fn);
+    };
+  }, []);
+
   const value = useMemo<BoardSocketContextValue>(() => ({
     connected,
     isApplyingRemote,
@@ -282,7 +316,9 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
     sendCursor,
     sendDraw,
     sendPresence,
-  }), [connected, isApplyingRemote, sendEvent, sendCursor, sendDraw, sendPresence]);
+    sendClear,
+    addEventListener,
+  }), [connected, isApplyingRemote, sendEvent, sendCursor, sendDraw, sendPresence, sendClear, addEventListener]);
 
   return (
     <BoardSocketContext.Provider value={value}>{children}</BoardSocketContext.Provider>

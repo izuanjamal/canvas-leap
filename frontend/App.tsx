@@ -13,10 +13,13 @@ import { SharedBoardPage } from "./pages/SharedBoardPage";
 // App is the root component for CanvasLeap's frontend.
 export default function App() {
   const init = useAuthStore((s) => s.initFromStorage);
+  const checkSession = useAuthStore((s) => s.checkSession);
 
   useEffect(() => {
     init();
-  }, [init]);
+    // Try to hydrate user from session cookie if present
+    checkSession().catch(() => {});
+  }, [init, checkSession]);
 
   return (
     <div className="h-dvh w-dvw bg-background text-foreground overflow-hidden">
@@ -25,7 +28,7 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
-            <Route path="/oauth/callback" element={<OAuthCallback />} />
+            <Route path="/auth/callback/google" element={<OAuthCallback />} />
             <Route path="/boards" element={<Protected><BoardsPage /></Protected>} />
             <Route path="/boards/:id" element={<Protected><BoardPage /></Protected>} />
             <Route path="/s/:token" element={<SharedBoardPage />} />
@@ -41,7 +44,8 @@ export default function App() {
 
 function Protected({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
-  if (!token) {
+  const user = useAuthStore((s) => s.user);
+  if (!token && !user) {
     return <Navigate to="/login" replace />;
   }
   return <>{children}</>;

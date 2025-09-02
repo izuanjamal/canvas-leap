@@ -9,5 +9,5 @@ export const googleClientId = "";
 
 // The redirect URI for Google OAuth that points back to the SPA.
 // It must be registered in the Google Cloud Console for your OAuth client.
-// Typically: `${window.location.origin}/oauth/callback`
-export const oauthRedirectUri = typeof window !== "undefined" ? `${window.location.origin}/oauth/callback` : "/oauth/callback";
+// Typically: `${window.location.origin}/auth/callback/google`
+export const oauthRedirectUri = typeof window !== "undefined" ? `${window.location.origin}/auth/callback/google` : "/auth/callback/google";

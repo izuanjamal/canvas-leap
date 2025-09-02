@@ -1,11 +1,17 @@
-import { api, APIError } from "encore.dev/api";
+import { api, APIError, Cookie } from "encore.dev/api";
 import { authDB } from "./db";
-import type { LoginRequest, AuthResponse, AuthUser } from "./types";
+import type { LoginRequest, AuthUser } from "./types";
 import { signJWT } from "./jwt";
 import bcrypt from "bcryptjs";
 
-// Logs in an existing user with email/password and returns a JWT.
-export const login = api<LoginRequest, AuthResponse>(
+interface LoginResponse {
+  token: string;
+  user: AuthUser;
+  session: Cookie<"session">;
+}
+
+// Logs in an existing user with email/password and returns a JWT, also setting an HttpOnly session cookie.
+export const login = api<LoginRequest, LoginResponse>(
   { expose: true, method: "POST", path: "/auth/login" },
   async (req) => {
     const email = (req.email || "").trim().toLowerCase();
@@ -44,6 +50,15 @@ export const login = api<LoginRequest, AuthResponse>(
       avatar_url: user.avatar_url,
     });
 
-    return { token, user };
+    const session: Cookie<"session"> = {
+      value: token,
+      httpOnly: true,
+      secure: true,
+      sameSite: "Lax",
+      path: "/",
+      expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+    };
+
+    return { token, user, session };
   }
 );

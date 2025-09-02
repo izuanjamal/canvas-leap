@@ -1,10 +1,11 @@
-import { Header, APIError, Gateway } from "encore.dev/api";
+import { Header, Cookie, APIError, Gateway } from "encore.dev/api";
 import { authHandler } from "encore.dev/auth";
 import { authDB } from "./db";
 import { verifyJWT } from "./jwt";
 
 interface AuthParams {
   authorization?: Header<"Authorization">;
+  session?: Cookie<"session">;
 }
 
 export interface AuthData {
@@ -16,9 +17,12 @@ export interface AuthData {
 
 const handler = authHandler<AuthParams, AuthData>(async (req) => {
   const authHeader = req.authorization ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null;
+  const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null;
+  const cookieToken = req.session?.value ?? null;
+  const token = bearer || cookieToken;
+
   if (!token) {
-    throw APIError.unauthenticated("missing bearer token");
+    throw APIError.unauthenticated("missing bearer token or session cookie");
   }
 
   try {

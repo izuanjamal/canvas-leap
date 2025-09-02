@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuthStore } from "../state/authStore";
 import { generatePKCE } from "../utils/pkce";
-import { googleClientId, oauthRedirectUri } from "../config";
+import { oauthRedirectUri } from "../config";
+import backend from "~backend/client";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -25,17 +26,21 @@ export function LoginPage() {
   }
 
   async function onGoogle() {
-    const { verifier, challenge } = await generatePKCE();
-    sessionStorage.setItem("pkce_verifier", verifier);
-    sessionStorage.setItem("oauth_redirect_uri", oauthRedirectUri);
-    const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-    url.searchParams.set("client_id", googleClientId);
-    url.searchParams.set("response_type", "code");
-    url.searchParams.set("redirect_uri", oauthRedirectUri);
-    url.searchParams.set("scope", "openid email profile");
-    url.searchParams.set("code_challenge_method", "S256");
-    url.searchParams.set("code_challenge", challenge);
-    window.location.href = url.toString();
+    try {
+      const { verifier, challenge } = await generatePKCE();
+      sessionStorage.setItem("pkce_verifier", verifier);
+      sessionStorage.setItem("oauth_redirect_uri", oauthRedirectUri);
+      // Ask backend to construct the Google auth URL (keeps server-side config centralized)
+      const { url, state } = await backend.auth.googleStart({
+        redirect_uri: oauthRedirectUri,
+        code_challenge: challenge,
+      });
+      sessionStorage.setItem("oauth_state", state);
+      window.location.href = url;
+    } catch (err) {
+      console.error("Failed initiating Google OAuth", err);
+      alert("Could not start Google sign-in");
+    }
   }
 
   return (

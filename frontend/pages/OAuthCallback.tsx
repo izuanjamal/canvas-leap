@@ -7,12 +7,14 @@ export function OAuthCallback() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const setAuth = useAuthStore((s) => s.setAuth);
+  const checkSession = useAuthStore((s) => s.checkSession);
 
   useEffect(() => {
     (async () => {
       const code = params.get("code") || "";
       const verifier = sessionStorage.getItem("pkce_verifier") || "";
-      const redirectUri = sessionStorage.getItem("oauth_redirect_uri") || window.location.origin + "/oauth/callback";
+      const redirectUri = sessionStorage.getItem("oauth_redirect_uri") || window.location.origin + "/auth/callback/google";
+      // Clean up PKCE/session storage
       sessionStorage.removeItem("pkce_verifier");
       sessionStorage.removeItem("oauth_redirect_uri");
       if (!code || !verifier) {
@@ -21,12 +23,16 @@ export function OAuthCallback() {
       }
 
       try {
-        const resp = await backend.auth.googleExchange({
+        // Exchange code on the backend (sets HttpOnly session cookie)
+        const resp = await backend.auth.googleCallback({
           code,
           code_verifier: verifier,
           redirect_uri: redirectUri,
         });
+        // For backward-compat, also set token in client store; cookie is primary for auth.
         setAuth(resp.token, resp.user);
+        // Hydrate user from session cookie (ensures future requests work without header)
+        await checkSession();
         navigate("/", { replace: true });
       } catch (err) {
         console.error("Google OAuth exchange failed", err);
@@ -34,7 +40,7 @@ export function OAuthCallback() {
         navigate("/login", { replace: true });
       }
     })();
-  }, [params, navigate, setAuth]);
+  }, [params, navigate, setAuth, checkSession]);
 
   return (
     <div className="h-full w-full flex items-center justify-center">

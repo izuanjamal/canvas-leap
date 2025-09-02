@@ -11,6 +11,7 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, displayName?: string) => Promise<void>;
   logout: () => void;
+  checkSession: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -51,7 +52,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: () => {
+    // Clear server-side session cookie as well
+    backend.auth.logout().catch(() => {});
     get().clearAuth();
     window.location.href = "/login";
+  },
+
+  checkSession: async () => {
+    try {
+      const me = await backend.auth.me();
+      // Preserve existing token (may be null); ensure user is set for UI
+      set({ user: me.user });
+      // Optionally cache user for fast reloads
+      localStorage.setItem("cl_user", JSON.stringify(me.user));
+    } catch {
+      // no valid session; keep as-is
+    }
   },
 }));

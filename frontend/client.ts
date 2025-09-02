@@ -100,8 +100,10 @@ export interface ClientOptions {
 /**
  * Import the endpoint handlers to derive the types for the client.
  */
-import { googleExchange as api_auth_google_exchange_googleExchange } from "~backend/auth/google_exchange";
+import { googleCallback as api_auth_google_callback_googleCallback } from "~backend/auth/google_callback";
+import { googleStart as api_auth_google_start_googleStart } from "~backend/auth/google_start";
 import { login as api_auth_login_login } from "~backend/auth/login";
+import { logout as api_auth_logout_logout } from "~backend/auth/logout";
 import { me as api_auth_me_get_me } from "~backend/auth/me_get";
 import { updateMe as api_auth_me_update_updateMe } from "~backend/auth/me_update";
 import { register as api_auth_register_register } from "~backend/auth/register";
@@ -113,31 +115,57 @@ export namespace auth {
 
         constructor(baseClient: BaseClient) {
             this.baseClient = baseClient
-            this.googleExchange = this.googleExchange.bind(this)
+            this.googleCallback = this.googleCallback.bind(this)
+            this.googleStart = this.googleStart.bind(this)
             this.login = this.login.bind(this)
+            this.logout = this.logout.bind(this)
             this.me = this.me.bind(this)
             this.register = this.register.bind(this)
             this.updateMe = this.updateMe.bind(this)
         }
 
         /**
-         * Exchanges a Google OAuth authorization code (with PKCE) for a JWT and user profile.
-         * The frontend should initiate the OAuth flow and handle the redirect to the frontend route,
-         * then call this endpoint with { code, code_verifier, redirect_uri }.
+         * Handles Google OAuth callback by exchanging the code for tokens, verifying the ID token,
+         * upserting the user, issuing a JWT and setting it as an HttpOnly cookie.
          */
-        public async googleExchange(params: RequestType<typeof api_auth_google_exchange_googleExchange>): Promise<ResponseType<typeof api_auth_google_exchange_googleExchange>> {
+        public async googleCallback(params: RequestType<typeof api_auth_google_callback_googleCallback>): Promise<ResponseType<typeof api_auth_google_callback_googleCallback>> {
+            // Convert our params into the objects we need for the request
+            const query = makeRecord<string, string | string[]>({
+                code:            params.code,
+                "code_verifier": params["code_verifier"],
+                "redirect_uri":  params["redirect_uri"],
+            })
+
             // Now make the actual call to the API
-            const resp = await this.baseClient.callTypedAPI(`/auth/google/exchange`, {method: "POST", body: JSON.stringify(params)})
-            return JSON.parse(await resp.text(), dateReviver) as ResponseType<typeof api_auth_google_exchange_googleExchange>
+            const resp = await this.baseClient.callTypedAPI(`/auth/callback/google`, {query, method: "GET", body: undefined})
+            return JSON.parse(await resp.text(), dateReviver) as ResponseType<typeof api_auth_google_callback_googleCallback>
         }
 
         /**
-         * Logs in an existing user with email/password and returns a JWT.
+         * Starts the Google OAuth flow by generating an authorization URL.
+         */
+        public async googleStart(params: RequestType<typeof api_auth_google_start_googleStart>): Promise<ResponseType<typeof api_auth_google_start_googleStart>> {
+            // Now make the actual call to the API
+            const resp = await this.baseClient.callTypedAPI(`/auth/google`, {method: "POST", body: JSON.stringify(params)})
+            return JSON.parse(await resp.text(), dateReviver) as ResponseType<typeof api_auth_google_start_googleStart>
+        }
+
+        /**
+         * Logs in an existing user with email/password and returns a JWT, also setting an HttpOnly session cookie.
          */
         public async login(params: RequestType<typeof api_auth_login_login>): Promise<ResponseType<typeof api_auth_login_login>> {
             // Now make the actual call to the API
             const resp = await this.baseClient.callTypedAPI(`/auth/login`, {method: "POST", body: JSON.stringify(params)})
             return JSON.parse(await resp.text(), dateReviver) as ResponseType<typeof api_auth_login_login>
+        }
+
+        /**
+         * Logs out the user by clearing the session cookie.
+         */
+        public async logout(): Promise<ResponseType<typeof api_auth_logout_logout>> {
+            // Now make the actual call to the API
+            const resp = await this.baseClient.callTypedAPI(`/auth/logout`, {method: "POST", body: undefined})
+            return JSON.parse(await resp.text(), dateReviver) as ResponseType<typeof api_auth_logout_logout>
         }
 
         /**
@@ -150,7 +178,7 @@ export namespace auth {
         }
 
         /**
-         * Registers a new user with email/password and returns a JWT.
+         * Registers a new user with email/password and returns a JWT, also setting an HttpOnly session cookie.
          */
         public async register(params: RequestType<typeof api_auth_register_register>): Promise<ResponseType<typeof api_auth_register_register>> {
             // Now make the actual call to the API

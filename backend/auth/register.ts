@@ -1,11 +1,17 @@
-import { api, APIError } from "encore.dev/api";
+import { api, APIError, Cookie } from "encore.dev/api";
 import { authDB } from "./db";
-import type { RegisterRequest, AuthResponse, AuthUser } from "./types";
+import type { RegisterRequest, AuthUser } from "./types";
 import { signJWT } from "./jwt";
 import bcrypt from "bcryptjs";
 
-// Registers a new user with email/password and returns a JWT.
-export const register = api<RegisterRequest, AuthResponse>(
+interface RegisterResponse {
+  token: string;
+  user: AuthUser;
+  session: Cookie<"session">;
+}
+
+// Registers a new user with email/password and returns a JWT, also setting an HttpOnly session cookie.
+export const register = api<RegisterRequest, RegisterResponse>(
   { expose: true, method: "POST", path: "/auth/register" },
   async (req) => {
     const email = (req.email || "").trim().toLowerCase();
@@ -36,7 +42,17 @@ export const register = api<RegisterRequest, AuthResponse>(
         display_name: user.display_name,
         avatar_url: user.avatar_url,
       });
-      return { token, user };
+
+      const session: Cookie<"session"> = {
+        value: token,
+        httpOnly: true,
+        secure: true,
+        sameSite: "Lax",
+        path: "/",
+        expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      };
+
+      return { token, user, session };
     } catch (err: any) {
       if (err.code === "23505") {
         throw APIError.alreadyExists("email already registered");

@@ -16,10 +16,6 @@ export type ServerEventType =
 export interface ClientMessage {
   type: ClientEventType;
   boardId: string;
-  userId: string;
-  // Optional metadata for certain events
-  username?: string;
-  color?: string;
   // For BOARD_UPDATE: full board data (e.g. { elements: [...] })
   // For CURSOR_UPDATE: { x: number, y: number }
   data?: any;
@@ -30,10 +26,10 @@ export interface ServerMessage {
   type: ServerEventType;
   boardId: string;
   userId?: string;
-  // For USER_JOINED: { username: string, color: string }
-  // For USER_LEFT: { username?: string }
+  // For USER_JOINED: { display_name: string, avatar_url: string }
+  // For USER_LEFT: {}
   // For BOARD_UPDATE: full board data (e.g. { elements: [...] })
-  // For CURSOR_UPDATE: { x: number, y: number, username?: string, color?: string }
+  // For CURSOR_UPDATE: { x: number, y: number, display_name?: string, avatar_url?: string }
   data?: any;
   timestamp: number;
 }
@@ -41,7 +37,7 @@ export interface ServerMessage {
 export interface BoardSession {
   boardId: string;
   userId: string;
-  username: string;
-  color: string;
+  displayName: string;
+  avatarUrl: string;
   lastSeen: Date;
 }

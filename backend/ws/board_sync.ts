@@ -1,6 +1,7 @@
 import { api, StreamInOut } from "encore.dev/api";
 import { boardDB } from "../board/db";
 import type { ClientMessage, ServerMessage, BoardSession } from "./types";
+import { getAuthData } from "~encore/auth";
 
 // Store active connections per board
 const boardConnections = new Map<string, Set<StreamInOut<ClientMessage, ServerMessage>>>();
@@ -8,16 +9,14 @@ const sessionData = new Map<StreamInOut<ClientMessage, ServerMessage>, BoardSess
 
 interface BoardSyncHandshake {
   boardId: string;
-  userId: string;
-  username: string;
-  color?: string;
 }
 
 // Handles real-time collaboration for whiteboard sessions via WebSocket connection.
 export const boardSync = api.streamInOut<BoardSyncHandshake, ClientMessage, ServerMessage>(
-  { expose: true, path: "/ws/:boardId" },
+  { expose: true, path: "/ws/:boardId", auth: true },
   async (handshake, stream) => {
-    const { boardId, userId, username, color = "#3B82F6" } = handshake;
+    const auth = getAuthData()!;
+    const { boardId } = handshake;
 
     // Initialize board connections set if it doesn't exist
     if (!boardConnections.has(boardId)) {
@@ -27,20 +26,23 @@ export const boardSync = api.streamInOut<BoardSyncHandshake, ClientMessage, Serv
     const connections = boardConnections.get(boardId)!;
     connections.add(stream);
 
+    const displayName = auth.displayName ?? "User";
+    const avatarUrl = auth.avatarUrl ?? "";
+
     // Store session data for this connection
     const session: BoardSession = {
       boardId,
-      userId,
-      username,
-      color,
+      userId: auth.userID,
+      displayName,
+      avatarUrl,
       lastSeen: new Date(),
     };
     sessionData.set(stream, session);
 
-    // Create or update session in database
+    // Create or update presence in database
     await boardDB.exec`
-      INSERT INTO sessions (board_id, user_id, connected_at, last_seen)
-      VALUES (${boardId}, ${userId}, NOW(), NOW())
+      INSERT INTO presence (board_id, user_id, connected_at, last_seen)
+      VALUES (${boardId}, ${auth.userID}, NOW(), NOW())
       ON CONFLICT (board_id, user_id)
       DO UPDATE SET last_seen = NOW()
     `;
@@ -49,8 +51,8 @@ export const boardSync = api.streamInOut<BoardSyncHandshake, ClientMessage, Serv
     const joinMessage: ServerMessage = {
       type: "USER_JOINED",
       boardId,
-      userId,
-      data: { username, color },
+      userId: auth.userID,
+      data: { display_name: displayName, avatar_url: avatarUrl },
       timestamp: Date.now(),
     };
 
@@ -65,7 +67,7 @@ export const boardSync = api.streamInOut<BoardSyncHandshake, ClientMessage, Serv
         await handleClientMessage(message, stream, session);
       }
     } catch (error) {
-      console.error(`WebSocket error for user ${userId} on board ${boardId}:`, error);
+      console.error(`WebSocket error for user ${auth.userID} on board ${boardId}:`, error);
     } finally {
       clearInterval(heartbeat);
       // Clean up when connection closes
@@ -83,7 +85,7 @@ function startHeartbeat(
     try {
       session.lastSeen = new Date();
       await boardDB.exec`
-        UPDATE sessions
+        UPDATE presence
         SET last_seen = NOW()
         WHERE board_id = ${session.boardId} AND user_id = ${session.userId}
       `;
@@ -106,14 +108,14 @@ async function handleClientMessage(
   senderStream: StreamInOut<ClientMessage, ServerMessage>,
   session: BoardSession
 ): Promise<void> {
-  const { type, boardId, userId, data, timestamp } = message;
+  const { type, boardId, data, timestamp } = message;
 
   // Update last seen timestamp
   session.lastSeen = new Date();
   await boardDB.exec`
-    UPDATE sessions
+    UPDATE presence
     SET last_seen = NOW()
-    WHERE board_id = ${boardId} AND user_id = ${userId}
+    WHERE board_id = ${boardId} AND user_id = ${session.userId}
   `;
 
   switch (type) {
@@ -129,7 +131,7 @@ async function handleClientMessage(
       const updateMessage: ServerMessage = {
         type: "BOARD_UPDATE",
         boardId,
-        userId,
+        userId: session.userId,
         data,
         timestamp,
       };
@@ -142,8 +144,8 @@ async function handleClientMessage(
       const cursorMessage: ServerMessage = {
         type: "CURSOR_UPDATE",
         boardId,
-        userId,
-        data: { ...data, username: session.username, color: session.color },
+        userId: session.userId,
+        data: { ...data, display_name: session.displayName, avatar_url: session.avatarUrl },
         timestamp,
       };
       await broadcastToBoard(boardId, cursorMessage, senderStream);
@@ -213,7 +215,7 @@ async function cleanupConnection(
   stream: StreamInOut<ClientMessage, ServerMessage>,
   session: BoardSession
 ): Promise<void> {
-  const { boardId, userId, username } = session;
+  const { boardId, userId } = session;
 
   // Remove from active connections
   const connections = boardConnections.get(boardId);
@@ -231,7 +233,7 @@ async function cleanupConnection(
 
   // Remove from database
   await boardDB.exec`
-    DELETE FROM sessions
+    DELETE FROM presence
     WHERE board_id = ${boardId} AND user_id = ${userId}
   `;
 
@@ -240,7 +242,6 @@ async function cleanupConnection(
     type: "USER_LEFT",
     boardId,
     userId,
-    data: { username },
     timestamp: Date.now(),
   };
 

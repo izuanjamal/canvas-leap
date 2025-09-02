@@ -4,7 +4,7 @@ import type { CreateBoardRequest, Board } from "./types";
 
 // Creates a new whiteboard with the given name and optional initial data.
 export const create = api<CreateBoardRequest, Board>(
-  { expose: true, method: "POST", path: "/boards" },
+  { expose: true, method: "POST", path: "/boards", auth: true },
   async (req) => {
     const board = await boardDB.queryRow<Board>`
       INSERT INTO boards (name, data)

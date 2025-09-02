@@ -17,10 +17,18 @@ export function CursorLayer() {
             className="absolute"
             style={{ left: pt.x, top: pt.y }}
           >
-            <div
-              className="w-3 h-3 rounded-full border-2 border-background"
-              style={{ backgroundColor: c.color }}
-            />
+            {c.avatarUrl ? (
+              <img
+                src={c.avatarUrl}
+                alt={c.name}
+                className="w-4 h-4 rounded-full border-2 border-background shadow"
+              />
+            ) : (
+              <div
+                className="w-3 h-3 rounded-full border-2 border-background shadow"
+                style={{ backgroundColor: c.color }}
+              />
+            )}
             <div className="text-[10px] px-1 py-0.5 rounded bg-card/80 border mt-1 shadow whitespace-nowrap">
               {c.name}
             </div>

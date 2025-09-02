@@ -8,7 +8,7 @@ interface GetBoardParams {
 
 // Retrieves a board by its ID, including all board data and metadata.
 export const get = api<GetBoardParams, Board>(
-  { expose: true, method: "GET", path: "/boards/:id" },
+  { expose: true, method: "GET", path: "/boards/:id", auth: true },
   async (params) => {
     const board = await boardDB.queryRow<Board>`
       SELECT id, name, created_at, updated_at, data

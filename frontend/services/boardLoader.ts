@@ -1,7 +1,7 @@
-import backend from "~backend/client";
 import type { Board as BackendBoard } from "~backend/board/types";
 import type { BoardData, BoardElement, StickyNoteElement, TextElement } from "../types/board";
 import { sampleBoard } from "../data/sampleBoard";
+import { getBackendClient } from "../lib/backendClient";
 
 export interface FrontendBoard {
   id: string;
@@ -14,6 +14,7 @@ export interface FrontendBoard {
 export async function loadInitialBoard(initialBoardId: string): Promise<FrontendBoard> {
   if (initialBoardId) {
     try {
+      const backend = getBackendClient();
       const b = await backend.board.get({ id: initialBoardId });
       return convertBackendBoard(b);
     } catch (err) {

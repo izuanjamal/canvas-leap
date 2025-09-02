@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
-import backend from "~backend/client";
 import type { ClientMessage, ServerMessage } from "~backend/ws/types";
 import { useCanvasStore } from "../state/canvasStore";
 import type { BoardData, Cursor } from "../types/board";
-import { ensureUser } from "../services/user";
+import { getBackendClient } from "../lib/backendClient";
+import { colorFromId } from "../utils/avatar";
 
 // Simple throttle util
 function throttle<T extends (...args: any[]) => void>(fn: T, ms: number): T {
@@ -52,12 +52,11 @@ export function useRealtimeSync() {
     let mounted = true;
 
     async function connect() {
-      const { id: userId, username, color } = await ensureUser();
+      const backend = getBackendClient();
 
       // Wait until a board is loaded
       let boardId = get().boardId;
       if (!boardId) {
-        // Poll a short time for boardId; in typical flow App loads it almost immediately.
         for (let i = 0; i < 50 && !boardId; i++) {
           await new Promise((r) => setTimeout(r, 50));
           boardId = get().boardId;
@@ -65,12 +64,9 @@ export function useRealtimeSync() {
       }
       if (!mounted || !boardId) return;
 
-      // Establish stream
+      // Establish stream (auth is handled by backend client)
       const stream = await backend.ws.boardSync({
         boardId,
-        userId,
-        username,
-        color,
       });
 
       if (!mounted) {
@@ -85,12 +81,14 @@ export function useRealtimeSync() {
         const resp = await backend.ws.getActiveUsers({ boardId });
         const map = new Map<string, Cursor>();
         for (const u of resp.users) {
+          const color = colorFromId(u.id);
           map.set(u.id, {
             id: u.id,
             x: 0,
             y: 0,
-            color: u.color,
-            name: u.username,
+            color,
+            name: u.display_name || "User",
+            avatarUrl: u.avatar_url || "",
           });
         }
         cursorsRef.current = map;
@@ -117,7 +115,6 @@ export function useRealtimeSync() {
           await stream.send({
             type: "PING",
             boardId: boardId!,
-            userId,
             timestamp: Date.now(),
           });
         } catch (err) {
@@ -131,11 +128,8 @@ export function useRealtimeSync() {
         streamRef.current.send({
           type: "CURSOR_UPDATE",
           boardId: boardId!,
-          userId,
           data: { x, y },
           timestamp: Date.now(),
-          username,
-          color,
         });
       }, 50);
 
@@ -157,7 +151,6 @@ export function useRealtimeSync() {
         (s) => [s.order, s.elements] as const,
         async () => {
           if (suppressSyncRef.current) return;
-          // Debounce inside this promise chain
           await new Promise((r) => setTimeout(r, 200));
           if (!streamRef.current) return;
           try {
@@ -165,7 +158,6 @@ export function useRealtimeSync() {
             await streamRef.current.send({
               type: "BOARD_UPDATE",
               boardId: boardId!,
-              userId,
               data,
               timestamp: Date.now(),
             });
@@ -184,9 +176,10 @@ export function useRealtimeSync() {
           if (!msg.userId) return;
           const map = cursorsRef.current;
           const prev = map.get(msg.userId);
-          const name = msg.data?.username ?? prev?.name ?? "User";
-          const color = msg.data?.color ?? prev?.color ?? "#3B82F6";
-          map.set(msg.userId, { id: msg.userId, x: prev?.x ?? 0, y: prev?.y ?? 0, color, name });
+          const name = msg.data?.display_name ?? prev?.name ?? "User";
+          const avatarUrl = msg.data?.avatar_url ?? prev?.avatarUrl ?? "";
+          const color = prev?.color ?? colorFromId(msg.userId);
+          map.set(msg.userId, { id: msg.userId, x: prev?.x ?? 0, y: prev?.y ?? 0, color, name, avatarUrl });
           setCursors(Array.from(map.values()));
           break;
         }
@@ -201,11 +194,12 @@ export function useRealtimeSync() {
           if (!msg.userId) return;
           const map = cursorsRef.current;
           const prev = map.get(msg.userId);
-          const name = msg.data?.username ?? prev?.name ?? "User";
-          const color = msg.data?.color ?? prev?.color ?? "#3B82F6";
+          const name = msg.data?.display_name ?? prev?.name ?? "User";
+          const avatarUrl = msg.data?.avatar_url ?? prev?.avatarUrl ?? "";
           const x = Number(msg.data?.x) || 0;
           const y = Number(msg.data?.y) || 0;
-          map.set(msg.userId, { id: msg.userId, x, y, color, name });
+          const color = prev?.color ?? colorFromId(msg.userId);
+          map.set(msg.userId, { id: msg.userId, x, y, color, name, avatarUrl });
           setCursors(Array.from(map.values()));
           break;
         }
@@ -216,7 +210,6 @@ export function useRealtimeSync() {
           try {
             applyRemoteBoardData(data);
           } finally {
-            // Allow local changes to sync after applying remote state
             setTimeout(() => {
               suppressSyncRef.current = false;
             }, 0);
@@ -239,19 +232,6 @@ export function useRealtimeSync() {
       try {
         const stream = streamRef.current;
         if (stream) {
-          // Try to inform server we are leaving
-          const state = get();
-          if (state.boardId) {
-            const user = JSON.parse(localStorage.getItem("canvasLeapUser") || "{}");
-            if (user?.id) {
-              stream.send({
-                type: "USER_LEAVE",
-                boardId: state.boardId,
-                userId: user.id,
-                timestamp: Date.now(),
-              }).catch(() => {});
-            }
-          }
           (stream as any).close?.();
         }
       } catch (err) {

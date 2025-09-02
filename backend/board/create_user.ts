@@ -3,6 +3,7 @@ import { boardDB } from "./db";
 import type { CreateUserRequest, User } from "./types";
 
 // Creates a new user for collaborative whiteboard sessions.
+// NOTE: This legacy endpoint is kept for backward compatibility but is no longer used after auth integration.
 export const createUser = api<CreateUserRequest, User>(
   { expose: true, method: "POST", path: "/users" },
   async (req) => {

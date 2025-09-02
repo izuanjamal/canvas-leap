@@ -4,7 +4,7 @@ import type { UpdateBoardRequest, Board } from "./types";
 
 // Updates the board data with new content from collaborative editing.
 export const update = api<UpdateBoardRequest, Board>(
-  { expose: true, method: "PUT", path: "/boards/:id" },
+  { expose: true, method: "PUT", path: "/boards/:id", auth: true },
   async (req) => {
     const board = await boardDB.queryRow<Board>`
       UPDATE boards

@@ -1,50 +1,40 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/toaster";
-import { Toolbar } from "./components/Toolbar";
-import { Canvas } from "./components/Canvas/Canvas";
-import { Topbar } from "./components/Topbar";
-import { useCanvasStore } from "./state/canvasStore";
-import { loadInitialBoard } from "./services/boardLoader";
-import { initialBoardId } from "./config";
-import { useRealtimeSync } from "./hooks/useRealtimeSync";
+import { useAuthStore } from "./state/authStore";
+import { LoginPage } from "./pages/LoginPage";
+import { RegisterPage } from "./pages/RegisterPage";
+import { OAuthCallback } from "./pages/OAuthCallback";
+import { BoardPage } from "./pages/BoardPage";
 
 // App is the root component for CanvasLeap's frontend.
 export default function App() {
-  const setBoard = useCanvasStore((s) => s.setBoardFromData);
-  const setCursors = useCanvasStore((s) => s.setCursors);
-  const boardName = useCanvasStore((s) => s.boardName);
+  const init = useAuthStore((s) => s.initFromStorage);
 
-  // Load board on mount.
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const board = await loadInitialBoard(initialBoardId);
-      if (!mounted) return;
-      setBoard(board.id, board.name, board.data);
-      document.title = `${board.name} • CanvasLeap`;
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [setBoard]);
-
-  // Initialize realtime sync (connects after board is loaded and local user created)
-  useRealtimeSync();
-
-  // Placeholder live cursors removed; realtime will set presence.
-
-  const appTitle = useMemo(() => boardName || "CanvasLeap", [boardName]);
+    init();
+  }, [init]);
 
   return (
-    <div className="h-dvh w-dvw flex flex-col bg-background text-foreground overflow-hidden">
-      <Topbar title={appTitle} />
-      <div className="flex flex-1 overflow-hidden">
-        <Toolbar />
-        <div className="flex-1">
-          <Canvas />
-        </div>
-      </div>
+    <div className="h-dvh w-dvw bg-background text-foreground overflow-hidden">
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/oauth/callback" element={<OAuthCallback />} />
+          <Route path="/" element={<Protected><BoardPage /></Protected>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
       <Toaster />
     </div>
   );
+}
+
+function Protected({ children }: { children: React.ReactNode }) {
+  const token = useAuthStore((s) => s.token);
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
 }

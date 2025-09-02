@@ -13,7 +13,7 @@ interface ListBoardsResponse {
 
 // Retrieves all boards ordered by most recently updated.
 export const list = api<ListBoardsParams, ListBoardsResponse>(
-  { expose: true, method: "GET", path: "/boards" },
+  { expose: true, method: "GET", path: "/boards", auth: true },
   async (params) => {
     const limit = params.limit || 50;
     

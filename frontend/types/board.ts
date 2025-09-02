@@ -34,4 +34,5 @@ export interface Cursor {
   y: number;
   color: string;
   name: string;
+  avatarUrl?: string;
 }

@@ -21,15 +21,15 @@ export function CursorLayer() {
               <img
                 src={c.avatarUrl}
                 alt={c.name}
-                className="w-4 h-4 rounded-full border-2 border-background shadow"
+                className="w-8 h-8 rounded-full ring-2 ring-background shadow-md"
               />
             ) : (
               <div
-                className="w-3 h-3 rounded-full border-2 border-background shadow"
+                className="w-8 h-8 rounded-full ring-2 ring-background shadow-md"
                 style={{ backgroundColor: c.color }}
               />
             )}
-            <div className="text-[10px] px-1 py-0.5 rounded bg-card/80 border mt-1 shadow whitespace-nowrap">
+            <div className="text-[10px] px-1 py-0.5 rounded bg-card/90 border mt-1 shadow whitespace-nowrap">
               {c.name}
             </div>
           </div>

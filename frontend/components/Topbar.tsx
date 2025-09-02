@@ -3,6 +3,7 @@ import { ZoomControls } from "./ZoomControls";
 import { useAuthStore } from "../state/authStore";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { AvatarStack } from "./AvatarStack";
 
 interface TopbarProps {
   title: string;
@@ -21,6 +22,8 @@ export function Topbar({ title }: TopbarProps) {
       <div className="font-medium text-sm">{title}</div>
       <div className="flex items-center gap-3">
         <ZoomControls />
+        <div className="h-6 w-px bg-border" />
+        <AvatarStack />
         <div className="h-6 w-px bg-border" />
         <div className="flex items-center gap-2">
           <Avatar className="size-7">

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBoardSocket } from "../contexts/BoardSocketProvider";
+import { colorFromId } from "../utils/avatar";
 
 export type ToolKind = "pen" | "eraser";
 
@@ -66,6 +67,14 @@ function uid() {
   return Math.random().toString(36).slice(2);
 }
 
+type RemoteCursor = {
+  x: number;
+  y: number;
+  name: string;
+  avatarUrl?: string;
+  color: string;
+};
+
 const WhiteboardCanvas = React.forwardRef<WhiteboardCanvasHandle, WhiteboardCanvasProps>(function WhiteboardCanvas(
   { strokeColor, brushSize, tool }: WhiteboardCanvasProps,
   ref
@@ -84,7 +93,7 @@ const WhiteboardCanvas = React.forwardRef<WhiteboardCanvasHandle, WhiteboardCanv
   }>({ stroke: null, isDrawing: false });
 
   // Remote cursors map
-  const [remoteCursors, setRemoteCursors] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const [remoteCursors, setRemoteCursors] = useState<Map<string, RemoteCursor>>(new Map());
 
   // Canvas refs
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -375,9 +384,12 @@ const WhiteboardCanvas = React.forwardRef<WhiteboardCanvasHandle, WhiteboardCanv
         case "CURSOR": {
           const x = Number(ev.payload?.x) || 0;
           const y = Number(ev.payload?.y) || 0;
+          const name = String(ev.payload?.displayName || "") || ev.userId || "User";
+          const avatarUrl = String(ev.payload?.avatarUrl || "");
           setRemoteCursors((prev) => {
             const next = new Map(prev);
-            next.set(ev.userId, { x, y });
+            const color = next.get(ev.userId)?.color ?? colorFromId(ev.userId);
+            next.set(ev.userId, { x, y, name, avatarUrl, color });
             return next;
           });
           break;
@@ -407,15 +419,26 @@ const WhiteboardCanvas = React.forwardRef<WhiteboardCanvasHandle, WhiteboardCanv
 
       {/* Remote cursors overlay */}
       <div className="pointer-events-none absolute inset-0">
-        {Array.from(remoteCursors.entries()).map(([userId, p]) => (
+        {Array.from(remoteCursors.entries()).map(([userId, c]) => (
           <div
             key={userId}
             className="absolute"
-            style={{ left: p.x, top: p.y }}
+            style={{ left: c.x, top: c.y }}
           >
-            <div className="w-3 h-3 rounded-full bg-primary border-2 border-background shadow" />
-            <div className="mt-1 text-[10px] px-1 py-0.5 rounded bg-card/80 border shadow whitespace-nowrap">
-              {userId}
+            {c.avatarUrl ? (
+              <img
+                src={c.avatarUrl}
+                alt={c.name}
+                className="w-8 h-8 rounded-full ring-2 ring-background shadow-md"
+              />
+            ) : (
+              <div
+                className="w-8 h-8 rounded-full ring-2 ring-background shadow-md"
+                style={{ backgroundColor: c.color }}
+              />
+            )}
+            <div className="mt-1 text-[10px] px-1 py-0.5 rounded bg-card/90 border shadow whitespace-nowrap">
+              {c.name}
             </div>
           </div>
         ))}

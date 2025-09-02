@@ -6,6 +6,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { OAuthCallback } from "./pages/OAuthCallback";
 import { BoardPage } from "./pages/BoardPage";
+import { BoardSocketProvider } from "./contexts/BoardSocketProvider";
 
 // App is the root component for CanvasLeap's frontend.
 export default function App() {
@@ -18,13 +19,15 @@ export default function App() {
   return (
     <div className="h-dvh w-dvw bg-background text-foreground overflow-hidden">
       <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/oauth/callback" element={<OAuthCallback />} />
-          <Route path="/" element={<Protected><BoardPage /></Protected>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <BoardSocketProvider>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/oauth/callback" element={<OAuthCallback />} />
+            <Route path="/" element={<Protected><BoardPage /></Protected>} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BoardSocketProvider>
       </BrowserRouter>
       <Toaster />
     </div>

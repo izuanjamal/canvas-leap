@@ -5,7 +5,6 @@ import { Topbar } from "../components/Topbar";
 import { useCanvasStore } from "../state/canvasStore";
 import { loadInitialBoard } from "../services/boardLoader";
 import { initialBoardId } from "../config";
-import { useRealtimeSync } from "../hooks/useRealtimeSync";
 
 export function BoardPage() {
   const setBoard = useCanvasStore((s) => s.setBoardFromData);
@@ -24,9 +23,6 @@ export function BoardPage() {
       mounted = false;
     };
   }, [setBoard]);
-
-  // Initialize realtime sync (connects after board is loaded)
-  useRealtimeSync();
 
   const appTitle = useMemo(() => boardName || "CanvasLeap", [boardName]);
 

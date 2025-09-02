@@ -1,15 +1,38 @@
-import React, { useCallback, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { useCanvasStore } from "../../state/canvasStore";
 import { screenToWorld } from "../../utils/transform";
 import { Background } from "./Background";
 import { ElementLayer } from "./ElementLayer";
 import { CursorLayer } from "./CursorLayer";
+import { useBoardSocket } from "../../contexts/BoardSocketProvider";
+
+// Simple throttle util
+function throttle<T extends (...args: any[]) => void>(fn: T, ms: number): T {
+  let last = 0;
+  let timer: any = null;
+  let lastArgs: any[] | null = null;
+  const run = () => {
+    last = Date.now();
+    timer = null;
+    if (lastArgs) {
+      fn(...(lastArgs as any));
+      lastArgs = null;
+    }
+  };
+  return ((...args: any[]) => {
+    const now = Date.now();
+    const remaining = ms - (now - last);
+    if (remaining <= 0) {
+      last = now;
+      fn(...args);
+    } else {
+      lastArgs = args;
+      if (!timer) timer = setTimeout(run, remaining);
+    }
+  }) as T;
+}
 
 // Canvas renders the infinite board surface.
-// For the initial version we use a DOM-based approach (absolutely positioned elements inside a transform).
-// This makes interactions simple to implement and iterate on.
-// If/when we need high-performance vector drawing, we can migrate the element rendering to HTML5 Canvas or Fabric.js,
-// keeping the same pan/zoom math and store structure.
 export function Canvas() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -24,6 +47,9 @@ export function Canvas() {
   const isPanning = useCanvasStore((s) => s.isPanning);
   const addStickyAt = useCanvasStore((s) => s.addStickyAt);
   const addTextAt = useCanvasStore((s) => s.addTextAt);
+  const toBoardData = useCanvasStore((s) => s.toBoardData);
+
+  const { sendCursor, sendDraw, isApplyingRemote } = useBoardSocket();
 
   // Mouse wheel: pan or zoom (Ctrl/Cmd to zoom).
   const onWheel = useCallback(
@@ -40,17 +66,15 @@ export function Canvas() {
     [pan.x, pan.y, setPan, setZoomAt]
   );
 
-  // Pan with middle mouse or space+drag.
+  // Pan with middle mouse or shift+drag.
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (!containerRef.current) return;
 
       const isMiddle = e.button === 1;
-      const spacePressed = e.nativeEvent instanceof PointerEvent
-        ? (e.nativeEvent as any).shiftKey // shift for pan alternative to avoid Space + browser scroll conflicts
-        : false;
+      const shiftPressed = (e.nativeEvent as any).shiftKey === true;
 
-      if (isMiddle || spacePressed) {
+      if (isMiddle || shiftPressed) {
         startPan({ x: e.clientX, y: e.clientY });
         (e.target as Element).setPointerCapture(e.pointerId);
         return;
@@ -98,6 +122,52 @@ export function Canvas() {
     }),
     [pan.x, pan.y, zoom]
   );
+
+  // Send CURSOR events on pointer move across the viewport (throttled)
+  useEffect(() => {
+    const send = throttle((clientX: number, clientY: number) => {
+      // Approximate container top-left (0, topbar height 48px)
+      const containerTopLeft = { x: 0, y: 48 };
+      const x = (clientX - containerTopLeft.x - pan.x) / zoom;
+      const y = (clientY - containerTopLeft.y - pan.y) / zoom;
+      void sendCursor(x, y).catch((err) => {
+        console.error("Failed to send CURSOR", err);
+      });
+    }, 50);
+
+    const handler = (e: PointerEvent) => {
+      send(e.clientX, e.clientY);
+    };
+    window.addEventListener("pointermove", handler);
+    return () => {
+      window.removeEventListener("pointermove", handler);
+    };
+  }, [pan.x, pan.y, zoom, sendCursor]);
+
+  // Send DRAW events when local board changes (debounced)
+  useEffect(() => {
+    let timeout: any = null;
+    const unsub = useCanvasStore.subscribe(
+      (s) => [s.order, s.elements] as const,
+      () => {
+        if (isApplyingRemote) return; // avoid echo
+        if (timeout) clearTimeout(timeout);
+        timeout = setTimeout(() => {
+          try {
+            const data = toBoardData();
+            void sendDraw({ boardData: data });
+          } catch (err) {
+            console.error("Failed to send DRAW", err);
+          }
+        }, 200);
+      },
+      { equalityFn: (a, b) => a[0] === b[0] && a[1] === b[1] }
+    );
+    return () => {
+      if (timeout) clearTimeout(timeout);
+      unsub();
+    };
+  }, [sendDraw, toBoardData, isApplyingRemote]);
 
   return (
     <div

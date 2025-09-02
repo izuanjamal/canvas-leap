@@ -4,6 +4,7 @@ import type { BoardData, BoardElement, StickyNoteElement, TextElement, Cursor } 
 import { screenToWorld } from "../utils/transform";
 
 type Tool = "select" | "draw" | "erase" | "text" | "sticky";
+type Role = "owner" | "editor" | "viewer";
 
 interface CanvasState {
   // Board
@@ -24,6 +25,10 @@ interface CanvasState {
 
   // Presence
   cursors: Cursor[];
+
+  // Sharing / Permissions
+  currentRole: Role | null;
+  shareToken: string | null;
 
   // Actions
   setBoardMeta: (id: string, name: string) => void;
@@ -46,6 +51,9 @@ interface CanvasState {
   moveBy: (id: string, dx: number, dy: number) => void;
 
   setCursors: (c: Cursor[]) => void;
+
+  setCurrentRole: (r: Role | null) => void;
+  setShareToken: (t: string | null) => void;
 }
 
 export const useCanvasStore = create<CanvasState>((set, get) => ({
@@ -62,6 +70,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   isPanning: false,
 
   cursors: [],
+
+  currentRole: null,
+  shareToken: null,
 
   setBoardMeta: (id, name) => set({ boardId: id, boardName: name }),
 
@@ -98,8 +109,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const newZoom = clamp(zoom + delta, 0.25, 4);
     if (newZoom === zoom) return;
 
-    // Keep the screenPoint stable while zooming by adjusting pan accordingly.
-    const rect = { left: 0, top: 48 }; // account for topbar height when present
+    const rect = { left: 0, top: 48 };
     const worldBefore = screenToWorld(screenPoint, { x: rect.left, y: rect.top }, pan, zoom);
     const worldAfter = screenToWorld(screenPoint, { x: rect.left, y: rect.top }, pan, newZoom);
 
@@ -185,6 +195,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   setCursors: (c) => set({ cursors: c }),
+
+  setCurrentRole: (r) => set({ currentRole: r }),
+  setShareToken: (t) => set({ shareToken: t }),
 }));
 
 function clamp(n: number, min: number, max: number) {

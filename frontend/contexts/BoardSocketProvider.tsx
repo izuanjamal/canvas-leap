@@ -30,6 +30,7 @@ const BoardSocketContext = createContext<BoardSocketContextValue | null>(null);
 
 export function BoardSocketProvider({ children }: { children: React.ReactNode }) {
   const boardId = useCanvasStore((s) => s.boardId);
+  const shareToken = useCanvasStore((s) => s.shareToken);
   const setCursors = useCanvasStore((s) => s.setCursors);
   const applyRemoteBoardData = useCanvasStore((s) => s.applyRemoteBoardData);
 
@@ -74,12 +75,11 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
 
   const connect = useCallback(async () => {
     if (!boardId) return;
-    // Avoid double-connect
     if (streamRef.current) return;
 
     try {
       const backend = getBackendClient();
-      const stream = await backend.ws.boardSync({ boardId });
+      const stream = await backend.ws.boardSync({ boardId, shareToken } as any);
       streamRef.current = stream;
       setConnected(true);
       reconnectAttemptRef.current = 0;
@@ -93,12 +93,11 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
             payload: { ts: Date.now() },
           } as UnifiedClientMessage);
         } catch (err) {
-          // Likely disconnected; will trigger reconnect on reader loop
           console.error("Heartbeat send error", err);
         }
       }, 10_000);
 
-      // Initial presence load via ActiveUsers API
+      // Initial presence load via ActiveUsers API (ignore failures for anonymous users)
       try {
         const resp = await backend.ws.getActiveUsers({ boardId });
         const map = new Map<string, Cursor>();
@@ -116,10 +115,9 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
         cursorsRef.current = map;
         setCursors(Array.from(map.values()));
       } catch (err) {
-        console.error("Failed to load active users", err);
+        console.warn("Active users not available (likely anonymous)", err);
       }
 
-      // Reader loop
       (async () => {
         try {
           for await (const msg of stream) {
@@ -128,7 +126,6 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
         } catch (err) {
           console.error("Socket reader error", err);
         } finally {
-          // Connection ended
           setConnected(false);
           streamRef.current = null;
           scheduleReconnect();
@@ -140,7 +137,7 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
       streamRef.current = null;
       scheduleReconnect();
     }
-  }, [boardId, scheduleReconnect, setCursors]);
+  }, [boardId, shareToken, scheduleReconnect, setCursors]);
 
   useEffect(() => {
     if (!boardId) return;
@@ -152,11 +149,9 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
 
   const toBoardEvent = (msg: UnifiedServerMessage): BoardEvent | null => {
     if ((msg as any).eventType) {
-      // New enhanced event
       const type = (msg as any).eventType as BoardEvent["type"];
       return { type, userId: (msg as any).userId ?? "", payload: (msg as any).payload };
     }
-    // Legacy mapping
     switch (msg.type) {
       case "CURSOR_UPDATE":
         return { type: "CURSOR", userId: msg.userId ?? "", payload: msg.data };
@@ -187,7 +182,6 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
     const ev = toBoardEvent(msg);
     if (!ev) return;
 
-    // Notify subscribers first
     notifyListeners(ev);
 
     switch (ev.type) {
@@ -217,7 +211,6 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
             description: ev.userId,
           });
         }
-        // Optionally update cursors list sent in payload.connectedUsers
         if (Array.isArray(ev.payload?.connectedUsers)) {
           const map = new Map<string, Cursor>();
           for (const u of ev.payload.connectedUsers) {
@@ -237,14 +230,12 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
         break;
       }
       case "DRAW": {
-        // If the payload contains boardData, apply it (legacy Canvas)
         const boardData: BoardData | undefined = ev.payload?.boardData;
         if (boardData) {
           setIsApplyingRemote(true);
           try {
             applyRemoteBoardData(boardData);
           } finally {
-            // Allow senders to skip echo for this tick
             setTimeout(() => setIsApplyingRemote(false), 0);
           }
         }
@@ -260,7 +251,6 @@ export function BoardSocketProvider({ children }: { children: React.ReactNode })
   const sendEvent = useCallback(async (event: BoardEvent) => {
     const stream = streamRef.current;
     if (!stream) throw new Error("WebSocket not connected");
-    // Send in new enhanced format while keeping compatibility
     const msg: UnifiedClientMessage = {
       // @ts-expect-error eventType is used by backend
       eventType: event.type,

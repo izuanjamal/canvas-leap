@@ -1,15 +1,19 @@
 import { api, APIError } from "encore.dev/api";
 import { boardDB } from "./db";
-import type { BoardWithStrokes, Board, Stroke } from "./types";
+import type { BoardWithStrokes, Board, Stroke, Role } from "./types";
+import { getAuthData } from "~encore/auth";
+import { getUserRole } from "./permissions";
 
 interface GetBoardParams {
   id: string;
 }
 
 // Retrieves a board by its ID, including all strokes and metadata.
+// Enforces that the authenticated user must have access to the board.
 export const get = api<GetBoardParams, BoardWithStrokes>(
   { expose: true, method: "GET", path: "/boards/:id", auth: true },
   async (params) => {
+    const auth = getAuthData()!;
     const board = await boardDB.queryRow<Board>`
       SELECT
         id,
@@ -23,6 +27,12 @@ export const get = api<GetBoardParams, BoardWithStrokes>(
 
     if (!board) {
       throw APIError.notFound("Board not found");
+    }
+
+    // Verify user has access
+    const role = (await getUserRole(params.id, auth.userID)) as Role | null;
+    if (!role) {
+      throw APIError.permissionDenied("You do not have access to this board");
     }
 
     const strokes = await boardDB.queryAll<Stroke>`
@@ -39,6 +49,6 @@ export const get = api<GetBoardParams, BoardWithStrokes>(
       ORDER BY created_at ASC
     `;
 
-    return { board, strokes };
+    return { board, strokes, current_role: role };
   }
 );

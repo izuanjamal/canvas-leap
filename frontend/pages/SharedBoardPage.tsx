@@ -1,15 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Topbar } from "../components/Topbar";
-import { useCanvasStore } from "../state/canvasStore";
 import WhiteboardCanvas, { type WhiteboardCanvasHandle, type Stroke as CanvasStroke } from "../components/WhiteboardCanvas";
 import DrawingToolbar, { type ToolKind } from "../components/DrawingToolbar";
-import { getBackendClient } from "../lib/backendClient";
-import type { BoardWithStrokes, Stroke as BackendStroke } from "~backend/board/types";
+import backend from "~backend/client";
+import type { SharedBoardResponse, Stroke as BackendStroke } from "~backend/board/types";
+import { useCanvasStore } from "../state/canvasStore";
 
-export function BoardPage() {
-  const { id } = useParams<{ id: string }>();
+export function SharedBoardPage() {
+  const { token } = useParams<{ token: string }>();
   const setBoardMeta = useCanvasStore((s) => s.setBoardMeta);
+  const setShareToken = useCanvasStore((s) => s.setShareToken);
   const setCurrentRole = useCanvasStore((s) => s.setCurrentRole);
   const boardName = useCanvasStore((s) => s.boardName);
 
@@ -23,25 +24,25 @@ export function BoardPage() {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      if (!id) return;
+      if (!token) return;
       try {
-        const backend = getBackendClient();
-        const resp: BoardWithStrokes = await backend.board.get({ id });
+        const resp: SharedBoardResponse = await backend.board.getShared({ token });
         if (!mounted) return;
         setBoardMeta(resp.board.id, resp.board.title);
-        setCurrentRole(resp.current_role || "owner");
+        setShareToken(token);
+        setCurrentRole(resp.role);
         document.title = `${resp.board.title} • CanvasLeap`;
-
         const strokes: CanvasStroke[] = resp.strokes.map(mapBackendStrokeToCanvas);
         setInitialStrokes(strokes);
       } catch (err) {
-        console.error("Failed to load board", err);
+        console.error("Failed to load shared board", err);
       }
     })();
     return () => {
       mounted = false;
+      setShareToken(null);
     };
-  }, [id, setBoardMeta, setCurrentRole]);
+  }, [token, setBoardMeta, setShareToken, setCurrentRole]);
 
   const appTitle = useMemo(() => boardName || "CanvasLeap", [boardName]);
 

@@ -1,3 +1,5 @@
+export type Role = "owner" | "editor" | "viewer";
+
 export interface Board {
   id: string;
   // Title of the board. Backed by boards.title (or legacy boards.name if title is null).
@@ -27,6 +29,8 @@ export interface CreateBoardRequest {
 export interface BoardWithStrokes {
   board: Board;
   strokes: Stroke[];
+  // The caller's role for this board, if known (owner/editor/viewer).
+  current_role?: Role;
 }
 
 export interface ListBoardsResponse {
@@ -55,4 +59,62 @@ export interface Session {
 export interface CreateUserRequest {
   username: string;
   color?: string;
+}
+
+/* Sharing / Permissions */
+
+export interface ShareStatus {
+  enabled: boolean;
+  // Only present if enabled
+  token?: string;
+  role?: Exclude<Role, "owner">;
+}
+
+export interface ShareManageRequest {
+  // path param
+  id: string;
+  // "enable" | "disable" | "rotate" | "status"
+  action: "enable" | "disable" | "rotate" | "status";
+  // desired role for public link (viewer/editor), defaults to "viewer" for enable/rotate
+  role?: Exclude<Role, "owner">;
+}
+
+export interface ShareManageResponse {
+  status: "enabled" | "disabled";
+  token?: string;
+  role?: Exclude<Role, "owner">;
+}
+
+export interface ShareStatusParams {
+  id: string;
+}
+export interface ShareStatusResponse extends ShareStatus {}
+
+export interface GetSharedParams {
+  token: string;
+}
+
+export interface SharedBoardResponse {
+  board: Board;
+  strokes: Stroke[];
+  role: Exclude<Role, "owner">;
+}
+
+export interface BoardPermission {
+  id: string;
+  board_id: string;
+  user_id: string;
+  role: Role;
+  created_at: Date;
+}
+
+export interface UpdatePermissionsRequest {
+  id: string; // path param for board id
+  user_id?: string;
+  email?: string;
+  role: Role;
+}
+
+export interface UpdatePermissionsResponse {
+  permission: BoardPermission;
 }

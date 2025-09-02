@@ -1,6 +1,7 @@
 import { api, StreamInOut } from "encore.dev/api";
 import { boardDB } from "../board/db";
 import { getAuthData } from "~encore/auth";
+import { getUserRole, resolveShareToken } from "../board/permissions";
 
 // Enhanced event types for real-time collaboration
 export interface BoardEvent {
@@ -37,6 +38,9 @@ export interface UnifiedClientMessage {
   eventType?: "DRAW" | "CURSOR" | "PRESENCE" | "PING" | "CLEAR";
   userId?: string;
   payload?: any;
+
+  // Optional share token for anonymous access (handshake only)
+  shareToken?: string;
 }
 
 export interface UnifiedServerMessage {
@@ -58,6 +62,8 @@ export interface BoardSession {
   displayName: string;
   avatarUrl: string;
   lastSeen: Date;
+  role: "owner" | "editor" | "viewer";
+  anonymous: boolean;
 }
 
 // Helper alias to simplify nested generics
@@ -70,16 +76,52 @@ const connectedUsers = new Map<string, Map<string, { displayName: string; avatar
 
 interface BoardSyncHandshake {
   boardId: string;
+  shareToken?: string;
 }
 
 // Handles real-time collaboration for whiteboard sessions via WebSocket connection.
+// Supports authenticated users or anonymous users via a share token.
 export const boardSync = api.streamInOut<BoardSyncHandshake, UnifiedClientMessage, UnifiedServerMessage>(
-  { expose: true, path: "/ws/:boardId", auth: true },
+  { expose: true, path: "/ws/:boardId" },
   async (handshake, stream) => {
-    const auth = getAuthData()!;
+    const auth = getAuthData?.() ?? null;
     const { boardId } = handshake;
 
-    console.log(`[BoardSync] User ${auth.userID} connecting to board ${boardId}`);
+    console.log(`[BoardSync] Connecting to board ${boardId} (auth=${!!auth}, token=${handshake.shareToken ? "yes" : "no"})`);
+
+    // Resolve session identity and role
+    let userId = "";
+    let displayName = "Guest";
+    let avatarUrl = "";
+    let role: "owner" | "editor" | "viewer" = "viewer";
+    let anonymous = false;
+
+    if (auth) {
+      userId = auth.userID;
+      displayName = auth.displayName ?? auth.email ?? "User";
+      avatarUrl = auth.avatarUrl ?? "";
+      const r = await getUserRole(boardId, userId);
+      if (!r) {
+        // Not allowed to access
+        console.warn(`[BoardSync] Authenticated user ${userId} has no access to board ${boardId}`);
+        return;
+      }
+      role = r;
+    } else if (handshake.shareToken) {
+      const tok = await resolveShareToken(handshake.shareToken);
+      if (!tok || !tok.enabled || tok.board_id !== boardId) {
+        console.warn(`[BoardSync] Invalid share token for board ${boardId}`);
+        return;
+      }
+      userId = `anon-${crypto.randomUUID()}`;
+      role = tok.role;
+      displayName = "Guest";
+      avatarUrl = "";
+      anonymous = true;
+    } else {
+      console.warn("[BoardSync] No auth and no share token provided");
+      return;
+    }
 
     // Initialize board connections set if it doesn't exist
     if (!boardConnections.has(boardId)) {
@@ -91,39 +133,40 @@ export const boardSync = api.streamInOut<BoardSyncHandshake, UnifiedClientMessag
     const users = connectedUsers.get(boardId)!;
     connections.add(stream);
 
-    const displayName = auth.displayName ?? "User";
-    const avatarUrl = auth.avatarUrl ?? "";
-
     // Store session data for this connection
     const session: BoardSession = {
       boardId,
-      userId: auth.userID,
+      userId,
       displayName,
       avatarUrl,
       lastSeen: new Date(),
+      role,
+      anonymous,
     };
     sessionData.set(stream, session);
 
-    // Add user to connected users list
-    users.set(auth.userID, {
+    // Add to in-memory connected users
+    users.set(userId, {
       displayName,
       avatarUrl,
       lastPing: new Date(),
     });
 
-    // Create or update presence in database
-    await boardDB.exec`
-      INSERT INTO presence (board_id, user_id, connected_at, last_seen)
-      VALUES (${boardId}, ${auth.userID}, NOW(), NOW())
-      ON CONFLICT (board_id, user_id)
-      DO UPDATE SET last_seen = NOW()
-    `;
+    // Create or update presence in database for authenticated users only
+    if (!anonymous) {
+      await boardDB.exec`
+        INSERT INTO presence (board_id, user_id, connected_at, last_seen)
+        VALUES (${boardId}, ${userId}, NOW(), NOW())
+        ON CONFLICT (board_id, user_id)
+        DO UPDATE SET last_seen = NOW()
+      `;
+    }
 
     // Broadcast user joined message to other clients (legacy format)
     const joinMessage: UnifiedServerMessage = {
       type: "USER_JOINED",
       boardId,
-      userId: auth.userID,
+      userId,
       data: { display_name: displayName, avatar_url: avatarUrl },
       timestamp: Date.now(),
     };
@@ -131,7 +174,7 @@ export const boardSync = api.streamInOut<BoardSyncHandshake, UnifiedClientMessag
     // Also broadcast as new PRESENCE event
     const presenceEvent: UnifiedServerMessage = {
       eventType: "PRESENCE",
-      userId: auth.userID,
+      userId,
       payload: {
         action: "join",
         displayName,
@@ -144,7 +187,7 @@ export const boardSync = api.streamInOut<BoardSyncHandshake, UnifiedClientMessag
       },
     };
 
-    console.log(`[BoardSync] Broadcasting user join for ${auth.userID} to ${connections.size - 1} other clients`);
+    console.log(`[BoardSync] Broadcasting user join for ${userId} to ${connections.size - 1} other clients`);
     await broadcastToBoard(boardId, joinMessage, stream);
     await broadcastToBoard(boardId, presenceEvent, stream);
 
@@ -164,14 +207,14 @@ export const boardSync = api.streamInOut<BoardSyncHandshake, UnifiedClientMessag
         WHERE board_id = ${boardId}
         ORDER BY created_at ASC
       `;
-      console.log(`[BoardSync] Sending ${existing.length} persisted strokes to user ${auth.userID}`);
+      console.log(`[BoardSync] Sending ${existing.length} persisted strokes to user ${userId}`);
       for (const s of existing) {
         const ev: UnifiedServerMessage = {
           eventType: "DRAW",
           userId: s.user_id,
           payload: {
             stroke: {
-              id: s.id, // client may ignore
+              id: s.id,
               userId: s.user_id,
               color: s.color,
               width: s.thickness,
@@ -200,7 +243,7 @@ export const boardSync = api.streamInOut<BoardSyncHandshake, UnifiedClientMessag
         await handleMessage(message, stream, session);
       }
     } catch (error) {
-      console.error(`[BoardSync] WebSocket error for user ${auth.userID} on board ${boardId}:`, error);
+      console.error(`[BoardSync] WebSocket error for user ${userId} on board ${boardId}:`, error);
     } finally {
       clearInterval(heartbeat);
       // Clean up when connection closes
@@ -217,11 +260,13 @@ function startHeartbeat(
   return setInterval(async () => {
     try {
       session.lastSeen = new Date();
-      await boardDB.exec`
-        UPDATE presence
-        SET last_seen = NOW()
-        WHERE board_id = ${session.boardId} AND user_id = ${session.userId}
-      `;
+      if (!session.anonymous) {
+        await boardDB.exec`
+          UPDATE presence
+          SET last_seen = NOW()
+          WHERE board_id = ${session.boardId} AND user_id = ${session.userId}
+        `;
+      }
 
       // Clean up inactive users (no ping for more than 30 seconds)
       const users = connectedUsers.get(session.boardId);
@@ -300,14 +345,6 @@ async function handleBoardEvent(
 ): Promise<void> {
   const eventType = message.eventType!;
 
-  // Update last seen timestamp
-  session.lastSeen = new Date();
-  await boardDB.exec`
-    UPDATE presence
-    SET last_seen = NOW()
-    WHERE board_id = ${session.boardId} AND user_id = ${session.userId}
-  `;
-
   // Update user's last ping time
   const users = connectedUsers.get(session.boardId);
   if (users && users.has(session.userId)) {
@@ -316,11 +353,15 @@ async function handleBoardEvent(
 
   switch (eventType) {
     case "DRAW": {
+      if (session.role === "viewer") {
+        // Viewers cannot draw
+        return;
+      }
       console.log(`[BoardSync] Broadcasting DRAW event from ${session.userId} to board ${session.boardId}`);
 
-      // Save stroke to DB if provided
+      // Save stroke to DB if provided (only for authenticated users; anonymous draws are allowed to broadcast but not persisted)
       const stroke = message.payload?.stroke;
-      if (stroke && Array.isArray(stroke.points)) {
+      if (stroke && Array.isArray(stroke.points) && !session.anonymous) {
         try {
           await boardDB.exec`
             INSERT INTO strokes (board_id, user_id, path_data, color, thickness)
@@ -337,13 +378,11 @@ async function handleBoardEvent(
         }
       }
 
-      // Enhance payload with user info
       const enhancedEvent: UnifiedServerMessage = {
         eventType: "DRAW",
         userId: session.userId,
         payload: {
           ...message.payload,
-          // keep original stroke structure
           timestamp: Date.now(),
         },
       };
@@ -353,9 +392,6 @@ async function handleBoardEvent(
     }
 
     case "CURSOR": {
-      console.log(`[BoardSync] Broadcasting CURSOR event from ${session.userId}`);
-
-      // Enhance payload with user info
       const enhancedEvent: UnifiedServerMessage = {
         eventType: "CURSOR",
         userId: session.userId,
@@ -372,8 +408,6 @@ async function handleBoardEvent(
     }
 
     case "PRESENCE": {
-      console.log(`[BoardSync] Handling PRESENCE event from ${session.userId}:`, message.payload);
-
       if (message.payload?.action === "leave") {
         await cleanupConnection(senderStream, session);
       }
@@ -381,14 +415,6 @@ async function handleBoardEvent(
     }
 
     case "PING": {
-      console.log(`[BoardSync] Received PING from ${session.userId}`);
-
-      // Update user's last ping time
-      if (users && users.has(session.userId)) {
-        users.get(session.userId)!.lastPing = new Date();
-      }
-
-      // Send pong response
       const pongEvent: UnifiedServerMessage = {
         eventType: "PING",
         userId: "server",
@@ -402,8 +428,9 @@ async function handleBoardEvent(
     }
 
     case "CLEAR": {
-      console.log(`[BoardSync] Broadcasting CLEAR event on board ${session.boardId} by ${session.userId}`);
-
+      if (session.role === "viewer") {
+        return;
+      }
       const clearEvent: UnifiedServerMessage = {
         eventType: "CLEAR",
         userId: session.userId,
@@ -412,7 +439,6 @@ async function handleBoardEvent(
         },
       };
       await broadcastToBoard(session.boardId, clearEvent, senderStream);
-      // Note: We do not delete strokes from DB automatically on CLEAR to preserve history.
       break;
     }
 
@@ -429,26 +455,21 @@ async function handleClientMessage(
 ): Promise<void> {
   const { type, boardId, data, timestamp } = message;
 
-  // Update last seen timestamp
-  session.lastSeen = new Date();
-  await boardDB.exec`
-    UPDATE presence
-    SET last_seen = NOW()
-    WHERE board_id = ${boardId} AND user_id = ${session.userId}
-  `;
-
   switch (type) {
     case "BOARD_UPDATE": {
+      if (session.role === "viewer") return;
+
       console.log(`[BoardSync] Broadcasting BOARD_UPDATE from ${session.userId} to board ${boardId}`);
 
-      // Save board data to database (legacy)
-      await boardDB.exec`
-        UPDATE boards
-        SET data = ${JSON.stringify(data)}
-        WHERE id = ${boardId}
-      `;
+      // Save board data to database (legacy) only for authenticated users
+      if (!session.anonymous) {
+        await boardDB.exec`
+          UPDATE boards
+          SET data = ${JSON.stringify(data)}
+          WHERE id = ${boardId}
+        `;
+      }
 
-      // Broadcast update to other clients
       const updateMessage: UnifiedServerMessage = {
         type: "BOARD_UPDATE",
         boardId,
@@ -461,9 +482,6 @@ async function handleClientMessage(
     }
 
     case "CURSOR_UPDATE": {
-      console.log(`[BoardSync] Broadcasting CURSOR_UPDATE from ${session.userId}`);
-
-      // Broadcast cursor movement to other clients (don't save to DB)
       const cursorMessage: UnifiedServerMessage = {
         type: "CURSOR_UPDATE",
         boardId,
@@ -476,27 +494,16 @@ async function handleClientMessage(
     }
 
     case "USER_LEAVE": {
-      console.log(`[BoardSync] User ${session.userId} leaving board ${boardId}`);
       await cleanupConnection(senderStream, session);
       break;
     }
 
     case "USER_JOIN": {
-      console.log(`[BoardSync] User ${session.userId} joining board ${boardId} (already handled in handshake)`);
-      // Already handled by handshake; ignore or re-broadcast as needed
+      // Already handled by handshake
       break;
     }
 
     case "PING": {
-      console.log(`[BoardSync] Received legacy PING from ${session.userId}`);
-
-      // Update user's last ping time
-      const users = connectedUsers.get(session.boardId);
-      if (users && users.has(session.userId)) {
-        users.get(session.userId)!.lastPing = new Date();
-      }
-
-      // Respond with PONG to keep connection alive
       const pongMessage: UnifiedServerMessage = {
         type: "PONG",
         boardId,
@@ -534,12 +541,10 @@ async function broadcastToBoard(
       await connection.send(message);
     } catch (error) {
       console.error(`[BoardSync] Failed to send message to connection:`, error);
-      // Connection is dead, mark for removal
       deadConnections.push(connection);
     }
   }
 
-  // Clean up dead connections
   for (const deadConnection of deadConnections) {
     console.log(`[BoardSync] Cleaning up dead connection`);
     connections.delete(deadConnection);
@@ -559,12 +564,10 @@ async function cleanupConnection(
 
   console.log(`[BoardSync] Cleaning up connection for user ${userId} on board ${boardId}`);
 
-  // Remove from active connections
   const connections = boardConnections.get(boardId);
   if (connections) {
     connections.delete(stream);
 
-    // Remove empty board connection sets
     if (connections.size === 0) {
       console.log(`[BoardSync] Removing empty board connection set for ${boardId}`);
       boardConnections.delete(boardId);
@@ -572,22 +575,20 @@ async function cleanupConnection(
     }
   }
 
-  // Remove from connected users
   const users = connectedUsers.get(boardId);
   if (users) {
     users.delete(userId);
   }
 
-  // Remove session data
   sessionData.delete(stream);
 
-  // Remove from database
-  await boardDB.exec`
-    DELETE FROM presence
-    WHERE board_id = ${boardId} AND user_id = ${userId}
-  `;
+  if (!session.anonymous) {
+    await boardDB.exec`
+      DELETE FROM presence
+      WHERE board_id = ${boardId} AND user_id = ${userId}
+    `;
+  }
 
-  // Broadcast user left message (legacy format)
   const leaveMessage: UnifiedServerMessage = {
     type: "USER_LEFT",
     boardId,
@@ -595,7 +596,6 @@ async function cleanupConnection(
     timestamp: Date.now(),
   };
 
-  // Also broadcast as new PRESENCE event
   const presenceEvent: UnifiedServerMessage = {
     eventType: "PRESENCE",
     userId,

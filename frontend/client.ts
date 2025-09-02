@@ -176,7 +176,11 @@ import { create as api_board_create_create } from "~backend/board/create";
 import { createStroke as api_board_create_stroke_createStroke } from "~backend/board/create_stroke";
 import { createUser as api_board_create_user_createUser } from "~backend/board/create_user";
 import { get as api_board_get_get } from "~backend/board/get";
+import { getShared as api_board_get_shared_getShared } from "~backend/board/get_shared";
 import { list as api_board_list_list } from "~backend/board/list";
+import { updatePermissions as api_board_permissions_update_updatePermissions } from "~backend/board/permissions_update";
+import { manageShare as api_board_share_manage_manageShare } from "~backend/board/share_manage";
+import { shareStatus as api_board_share_status_shareStatus } from "~backend/board/share_status";
 import { update as api_board_update_update } from "~backend/board/update";
 
 export namespace board {
@@ -190,8 +194,12 @@ export namespace board {
             this.createStroke = this.createStroke.bind(this)
             this.createUser = this.createUser.bind(this)
             this.get = this.get.bind(this)
+            this.getShared = this.getShared.bind(this)
             this.list = this.list.bind(this)
+            this.manageShare = this.manageShare.bind(this)
+            this.shareStatus = this.shareStatus.bind(this)
             this.update = this.update.bind(this)
+            this.updatePermissions = this.updatePermissions.bind(this)
         }
 
         /**
@@ -224,6 +232,7 @@ export namespace board {
 
         /**
          * Retrieves a board by its ID, including all strokes and metadata.
+         * Enforces that the authenticated user must have access to the board.
          */
         public async get(params: { id: string }): Promise<ResponseType<typeof api_board_get_get>> {
             // Now make the actual call to the API
@@ -232,7 +241,16 @@ export namespace board {
         }
 
         /**
-         * Retrieves boards for the current user, ordered by most recently created.
+         * Fetches board data using a share token, without requiring authentication.
+         */
+        public async getShared(params: { token: string }): Promise<ResponseType<typeof api_board_get_shared_getShared>> {
+            // Now make the actual call to the API
+            const resp = await this.baseClient.callTypedAPI(`/shared/${encodeURIComponent(params.token)}`, {method: "GET", body: undefined})
+            return JSON.parse(await resp.text(), dateReviver) as ResponseType<typeof api_board_get_shared_getShared>
+        }
+
+        /**
+         * Retrieves boards for the current user (owner or has explicit permissions), ordered by most recently created.
          */
         public async list(params: RequestType<typeof api_board_list_list>): Promise<ResponseType<typeof api_board_list_list>> {
             // Convert our params into the objects we need for the request
@@ -246,7 +264,34 @@ export namespace board {
         }
 
         /**
+         * Enables, disables, or rotates the public share link for a board.
+         * Only the owner can manage sharing.
+         */
+        public async manageShare(params: RequestType<typeof api_board_share_manage_manageShare>): Promise<ResponseType<typeof api_board_share_manage_manageShare>> {
+            // Construct the body with only the fields which we want encoded within the body (excluding query string or header fields)
+            const body: Record<string, any> = {
+                action: params.action,
+                role:   params.role,
+            }
+
+            // Now make the actual call to the API
+            const resp = await this.baseClient.callTypedAPI(`/boards/${encodeURIComponent(params.id)}/share`, {method: "POST", body: JSON.stringify(body)})
+            return JSON.parse(await resp.text(), dateReviver) as ResponseType<typeof api_board_share_manage_manageShare>
+        }
+
+        /**
+         * Retrieves the current sharing status for a board.
+         * Only the owner can query this.
+         */
+        public async shareStatus(params: { id: string }): Promise<ResponseType<typeof api_board_share_status_shareStatus>> {
+            // Now make the actual call to the API
+            const resp = await this.baseClient.callTypedAPI(`/boards/${encodeURIComponent(params.id)}/share`, {method: "GET", body: undefined})
+            return JSON.parse(await resp.text(), dateReviver) as ResponseType<typeof api_board_share_status_shareStatus>
+        }
+
+        /**
          * Updates the board data with new content from collaborative editing.
+         * Requires editor or owner role.
          */
         public async update(params: RequestType<typeof api_board_update_update>): Promise<ResponseType<typeof api_board_update_update>> {
             // Construct the body with only the fields which we want encoded within the body (excluding query string or header fields)
@@ -257,6 +302,22 @@ export namespace board {
             // Now make the actual call to the API
             const resp = await this.baseClient.callTypedAPI(`/boards/${encodeURIComponent(params.id)}`, {method: "PUT", body: JSON.stringify(body)})
             return JSON.parse(await resp.text(), dateReviver) as ResponseType<typeof api_board_update_update>
+        }
+
+        /**
+         * Updates or creates a user permission for a board. Only the owner can manage permissions.
+         */
+        public async updatePermissions(params: RequestType<typeof api_board_permissions_update_updatePermissions>): Promise<ResponseType<typeof api_board_permissions_update_updatePermissions>> {
+            // Construct the body with only the fields which we want encoded within the body (excluding query string or header fields)
+            const body: Record<string, any> = {
+                email:     params.email,
+                role:      params.role,
+                "user_id": params["user_id"],
+            }
+
+            // Now make the actual call to the API
+            const resp = await this.baseClient.callTypedAPI(`/boards/${encodeURIComponent(params.id)}/permissions`, {method: "PATCH", body: JSON.stringify(body)})
+            return JSON.parse(await resp.text(), dateReviver) as ResponseType<typeof api_board_permissions_update_updatePermissions>
         }
     }
 }
@@ -306,9 +367,15 @@ export namespace ws {
 
         /**
          * Handles real-time collaboration for whiteboard sessions via WebSocket connection.
+         * Supports authenticated users or anonymous users via a share token.
          */
-        public async boardSync(): Promise<StreamInOut<StreamRequest<typeof api_ws_board_sync_boardSync>, StreamResponse<typeof api_ws_board_sync_boardSync>>> {
-            return await this.baseClient.createStreamInOut(`/ws/${encodeURIComponent(params.boardId)}`)
+        public async boardSync(params: RequestType<typeof api_ws_board_sync_boardSync>): Promise<StreamInOut<StreamRequest<typeof api_ws_board_sync_boardSync>, StreamResponse<typeof api_ws_board_sync_boardSync>>> {
+            // Convert our params into the objects we need for the request
+            const query = makeRecord<string, string | string[]>({
+                shareToken: params.shareToken,
+            })
+
+            return await this.baseClient.createStreamInOut(`/ws/${encodeURIComponent(params.boardId)}`, {query})
         }
 
         /**

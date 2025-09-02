@@ -29,6 +29,8 @@ interface DrawingToolbarProps {
   onRedo: () => void;
   onClear: () => void;
   onDownload: (format: "png" | "jpg") => void;
+  // When false, editing actions are disabled (viewer mode)
+  canEdit?: boolean;
 }
 
 export default function DrawingToolbar(props: DrawingToolbarProps) {
@@ -43,6 +45,7 @@ export default function DrawingToolbar(props: DrawingToolbarProps) {
     onRedo,
     onClear,
     onDownload,
+    canEdit = true,
   } = props;
 
   const isLight = useMemo(() => {
@@ -69,6 +72,7 @@ export default function DrawingToolbar(props: DrawingToolbarProps) {
           onClick={() => onToolChange("pen")}
           title="Pen"
           aria-label="Pen"
+          disabled={!canEdit}
         >
           <Paintbrush className="size-5" />
         </Button>
@@ -79,6 +83,7 @@ export default function DrawingToolbar(props: DrawingToolbarProps) {
           onClick={() => onToolChange("eraser")}
           title="Eraser"
           aria-label="Eraser"
+          disabled={!canEdit}
         >
           <Eraser className="size-5" />
         </Button>
@@ -106,9 +111,10 @@ export default function DrawingToolbar(props: DrawingToolbarProps) {
               onClick={() => onColorChange(c)}
               aria-label={`Preset color ${c}`}
               title={c}
+              disabled={!canEdit}
             />
           ))}
-          <label className="h-6 w-8 rounded border bg-background inline-flex items-center justify-center cursor-pointer" title="Custom color">
+          <label className={cn("h-6 w-8 rounded border bg-background inline-flex items-center justify-center", !canEdit && "opacity-50 cursor-not-allowed")} title="Custom color">
             <Droplet className="size-4 opacity-70" />
             <input
               type="color"
@@ -116,6 +122,7 @@ export default function DrawingToolbar(props: DrawingToolbarProps) {
               value={color}
               onChange={(e) => onColorChange(e.target.value)}
               aria-label="Choose custom color"
+              disabled={!canEdit}
             />
           </label>
         </div>
@@ -134,6 +141,7 @@ export default function DrawingToolbar(props: DrawingToolbarProps) {
           className="w-36"
           onValueChange={(v) => onSizeChange(v[0] ?? size)}
           aria-label="Brush size"
+          disabled={!canEdit}
         />
       </div>
 
@@ -141,13 +149,13 @@ export default function DrawingToolbar(props: DrawingToolbarProps) {
 
       {/* Actions */}
       <div className="flex items-center gap-1">
-        <Button size="icon" variant="secondary" onClick={onUndo} title="Undo" aria-label="Undo">
+        <Button size="icon" variant="secondary" onClick={onUndo} title="Undo" aria-label="Undo" disabled={!canEdit}>
           <RotateCcw className="size-5" />
         </Button>
-        <Button size="icon" variant="secondary" onClick={onRedo} title="Redo" aria-label="Redo">
+        <Button size="icon" variant="secondary" onClick={onRedo} title="Redo" aria-label="Redo" disabled={!canEdit}>
           <RotateCw className="size-5" />
         </Button>
-        <Button size="icon" variant="secondary" onClick={onClear} title="Clear board" aria-label="Clear board">
+        <Button size="icon" variant="secondary" onClick={onClear} title="Clear board" aria-label="Clear board" disabled={!canEdit}>
           <Trash2 className="size-5" />
         </Button>
         <DropdownMenu>

@@ -8,6 +8,7 @@ import { OAuthCallback } from "./pages/OAuthCallback";
 import { BoardPage } from "./pages/BoardPage";
 import { BoardSocketProvider } from "./contexts/BoardSocketProvider";
 import { BoardsPage } from "./pages/BoardsPage";
+import { SharedBoardPage } from "./pages/SharedBoardPage";
 
 // App is the root component for CanvasLeap's frontend.
 export default function App() {
@@ -27,6 +28,7 @@ export default function App() {
             <Route path="/oauth/callback" element={<OAuthCallback />} />
             <Route path="/boards" element={<Protected><BoardsPage /></Protected>} />
             <Route path="/boards/:id" element={<Protected><BoardPage /></Protected>} />
+            <Route path="/s/:token" element={<SharedBoardPage />} />
             <Route path="/" element={<Navigate to="/boards" replace />} />
             <Route path="*" element={<Navigate to="/boards" replace />} />
           </Routes>

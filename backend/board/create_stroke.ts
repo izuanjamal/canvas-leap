@@ -2,6 +2,7 @@ import { api, APIError } from "encore.dev/api";
 import { boardDB } from "./db";
 import type { Stroke } from "./types";
 import { getAuthData } from "~encore/auth";
+import { requireMinRole } from "./permissions";
 
 export interface CreateStrokeRequest {
   board_id: string;
@@ -24,6 +25,10 @@ export const createStroke = api<CreateStrokeRequest, CreateStrokeResponse>(
     if (!req.path_data || !Array.isArray(req.path_data.points)) {
       throw APIError.invalidArgument("path_data.points must be an array");
     }
+
+    // Permission: need at least editor to draw
+    await requireMinRole(req.board_id, auth.userID, "editor");
+
     const color = (req.color || "#000000").trim();
     const thickness = Number.isFinite(req.thickness) ? Math.max(1, Math.min(64, Math.floor(req.thickness))) : 2;
 

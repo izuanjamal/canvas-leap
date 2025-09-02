@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBoardSocket } from "../contexts/BoardSocketProvider";
 
+export type ToolKind = "pen" | "eraser";
+
 // 2D point
 interface Point {
   x: number;
@@ -13,7 +15,21 @@ export interface Stroke {
   userId: string;
   color: string;
   width: number;
+  mode: "draw" | "erase";
   points: Point[];
+}
+
+export interface WhiteboardCanvasProps {
+  strokeColor: string;
+  brushSize: number;
+  tool: ToolKind;
+}
+
+export interface WhiteboardCanvasHandle {
+  undo: () => void;
+  redo: () => void;
+  clear: () => Promise<void>;
+  download: (format: "png" | "jpg") => void;
 }
 
 // Throttle helper (e.g. 30fps ~ 33ms)
@@ -50,12 +66,13 @@ function uid() {
   return Math.random().toString(36).slice(2);
 }
 
-export default function WhiteboardCanvas() {
+const WhiteboardCanvas = React.forwardRef<WhiteboardCanvasHandle, WhiteboardCanvasProps>(function WhiteboardCanvas(
+  { strokeColor, brushSize, tool }: WhiteboardCanvasProps,
+  ref
+) {
   const { sendCursor, sendDraw, sendClear, addEventListener } = useBoardSocket();
 
   // Drawing state
-  const [color, setColor] = useState("#0ea5e9"); // sky-500
-  const [width, setWidth] = useState(4);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const undoStackRef = useRef<Stroke[]>([]);
   const redoStackRef = useRef<Stroke[]>([]);
@@ -72,7 +89,6 @@ export default function WhiteboardCanvas() {
   // Canvas refs
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const needsRedrawRef = useRef(false);
   const dprRef = useRef<number>(1);
@@ -93,6 +109,7 @@ export default function WhiteboardCanvas() {
       canvas.height = Math.floor(rect.height * dpr);
       canvas.style.width = `${rect.width}px`;
       canvas.style.height = `${rect.height}px`;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.scale(dpr, dpr);
       requestRedraw();
     };
@@ -119,7 +136,7 @@ export default function WhiteboardCanvas() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.scale(dpr, dpr);
 
-    // Render all strokes
+    // Render all strokes in order
     for (const s of strokes) {
       drawStroke(ctx, s);
     }
@@ -152,10 +169,21 @@ export default function WhiteboardCanvas() {
   function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke) {
     const pts = stroke.points;
     if (pts.length < 2) return;
+
+    ctx.save();
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
-    ctx.strokeStyle = stroke.color;
     ctx.lineWidth = stroke.width;
+
+    if (stroke.mode === "erase") {
+      // Erase previously drawn pixels
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.strokeStyle = "rgba(0,0,0,1)";
+    } else {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.strokeStyle = stroke.color;
+    }
+
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) {
@@ -163,6 +191,7 @@ export default function WhiteboardCanvas() {
       ctx.lineTo(p.x, p.y);
     }
     ctx.stroke();
+    ctx.restore();
   }
 
   // Pointer helpers
@@ -187,13 +216,14 @@ export default function WhiteboardCanvas() {
     const stroke: Stroke = {
       id: uid(),
       userId: "",
-      color,
-      width,
+      color: strokeColor,
+      width: brushSize,
+      mode: tool === "eraser" ? "erase" : "draw",
       points: [p],
     };
     drawingRef.current = { stroke, isDrawing: true };
     requestRedraw();
-  }, [color, width, requestRedraw]);
+  }, [strokeColor, brushSize, tool, requestRedraw]);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const dr = drawingRef.current;
@@ -247,59 +277,77 @@ export default function WhiteboardCanvas() {
     endStroke().catch(() => {});
   }, [endStroke]);
 
-  // Keyboard shortcuts: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const z = e.key.toLowerCase() === "z";
-      if ((e.ctrlKey || e.metaKey) && z) {
-        e.preventDefault();
-        if (e.shiftKey) {
-          redo();
-        } else {
-          undo();
+  // Imperative API
+  React.useImperativeHandle(
+    ref,
+    () => ({
+      undo() {
+        setStrokes((prev) => {
+          if (prev.length === 0) return prev;
+          const last = prev[prev.length - 1];
+          redoStackRef.current.push(last);
+          const ns = prev.slice(0, -1);
+          undoStackRef.current = [...ns];
+          requestRedraw();
+          return ns;
+        });
+      },
+      redo() {
+        setStrokes((prev) => {
+          const redoStack = redoStackRef.current;
+          if (redoStack.length === 0) return prev;
+          const item = redoStack.pop()!;
+          const ns = [...prev, item];
+          undoStackRef.current = [...ns];
+          requestRedraw();
+          return ns;
+        });
+      },
+      async clear() {
+        setStrokes([]);
+        undoStackRef.current = [];
+        redoStackRef.current = [];
+        requestRedraw();
+        try {
+          await sendClear();
+        } catch (err) {
+          console.error("Failed to send CLEAR event", err);
         }
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+      },
+      download(format: "png" | "jpg") {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
 
-  // Undo/Redo (local only)
-  const undo = useCallback(() => {
-    setStrokes((prev) => {
-      if (prev.length === 0) return prev;
-      const last = prev[prev.length - 1];
-      redoStackRef.current.push(last);
-      const ns = prev.slice(0, -1);
-      undoStackRef.current = [...ns];
-      requestRedraw();
-      return ns;
-    });
-  }, [requestRedraw]);
+        // Export: for jpg, compose on white background; for png, keep transparency
+        if (format === "png") {
+          const url = canvas.toDataURL("image/png");
+          triggerDownload(url, `canvas-${Date.now()}.png`);
+        } else {
+          const w = canvas.width;
+          const h = canvas.height;
+          const tmp = document.createElement("canvas");
+          tmp.width = w;
+          tmp.height = h;
+          const tctx = tmp.getContext("2d")!;
+          tctx.fillStyle = "#ffffff";
+          tctx.fillRect(0, 0, w, h);
+          tctx.drawImage(canvas, 0, 0);
+          const url = tmp.toDataURL("image/jpeg", 0.92);
+          triggerDownload(url, `canvas-${Date.now()}.jpg`);
+        }
+      },
+    }),
+    [requestRedraw, sendClear]
+  );
 
-  const redo = useCallback(() => {
-    setStrokes((prev) => {
-      const redoStack = redoStackRef.current;
-      if (redoStack.length === 0) return prev;
-      const item = redoStack.pop()!;
-      const ns = [...prev, item];
-      undoStackRef.current = [...ns];
-      requestRedraw();
-      return ns;
-    });
-  }, [requestRedraw]);
-
-  const clearBoard = useCallback(async () => {
-    setStrokes([]);
-    undoStackRef.current = [];
-    redoStackRef.current = [];
-    requestRedraw();
-    try {
-      await sendClear();
-    } catch (err) {
-      console.error("Failed to send CLEAR event", err);
-    }
-  }, [requestRedraw, sendClear]);
+  function triggerDownload(url: string, filename: string) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
 
   // Subscribe to incoming board events
   useEffect(() => {
@@ -344,55 +392,7 @@ export default function WhiteboardCanvas() {
   }, [addEventListener, requestRedraw]);
 
   return (
-    <div ref={containerRef} className="relative h-full w-full bg-background">
-      {/* Controls */}
-      <div className="absolute top-2 left-2 z-10 flex items-center gap-2 rounded border bg-card/70 backdrop-blur px-2 py-1">
-        <label className="text-xs flex items-center gap-1">
-          <span>Color</span>
-          <input
-            type="color"
-            value={color}
-            onChange={(e) => setColor(e.target.value)}
-            className="h-6 w-8 bg-transparent cursor-pointer"
-            aria-label="Stroke color"
-          />
-        </label>
-        <label className="text-xs flex items-center gap-1">
-          <span>Width</span>
-          <input
-            type="range"
-            min={1}
-            max={24}
-            value={width}
-            onChange={(e) => setWidth(Number(e.target.value))}
-            className="w-24"
-            aria-label="Stroke width"
-          />
-          <span className="tabular-nums w-6 text-right">{width}</span>
-        </label>
-        <button
-          className="text-xs rounded border px-2 py-1 hover:bg-accent"
-          onClick={undo}
-          aria-label="Undo"
-        >
-          Undo
-        </button>
-        <button
-          className="text-xs rounded border px-2 py-1 hover:bg-accent"
-          onClick={redo}
-          aria-label="Redo"
-        >
-          Redo
-        </button>
-        <button
-          className="text-xs rounded border px-2 py-1 hover:bg-destructive/10 text-destructive"
-          onClick={clearBoard}
-          aria-label="Clear board"
-        >
-          Clear
-        </button>
-      </div>
-
+    <div className="relative h-full w-full bg-background">
       {/* Drawing canvas */}
       <div className="absolute inset-0">
         <canvas
@@ -422,4 +422,6 @@ export default function WhiteboardCanvas() {
       </div>
     </div>
   );
-}
+});
+
+export default WhiteboardCanvas;

@@ -27,6 +27,7 @@ interface CanvasState {
 
   // Actions
   setBoardFromData: (id: string, name: string, data: BoardData) => void;
+  applyRemoteBoardData: (data: BoardData) => void;
   toBoardData: () => BoardData;
 
   setTool: (t: Tool) => void;
@@ -69,6 +70,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       order.push(el.id);
     }
     set({ boardId: id, boardName: name, elements, order });
+  },
+
+  applyRemoteBoardData: (data) => {
+    const elements: Record<string, BoardElement> = {};
+    const order: string[] = [];
+    for (const el of data.elements) {
+      elements[el.id] = el;
+      order.push(el.id);
+    }
+    set({ elements, order });
   },
 
   toBoardData: () => {

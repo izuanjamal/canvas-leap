@@ -1,15 +1,39 @@
+export type ClientEventType =
+  | "USER_JOIN"
+  | "USER_LEAVE"
+  | "BOARD_UPDATE"
+  | "CURSOR_UPDATE"
+  | "PING";
+
+export type ServerEventType =
+  | "USER_JOINED"
+  | "USER_LEFT"
+  | "BOARD_UPDATE"
+  | "CURSOR_UPDATE"
+  | "PONG"
+  | "ERROR";
+
 export interface ClientMessage {
-  type: "board_update" | "cursor_move" | "user_join" | "user_leave" | "ping";
+  type: ClientEventType;
   boardId: string;
   userId: string;
+  // Optional metadata for certain events
+  username?: string;
+  color?: string;
+  // For BOARD_UPDATE: full board data (e.g. { elements: [...] })
+  // For CURSOR_UPDATE: { x: number, y: number }
   data?: any;
   timestamp: number;
 }
 
 export interface ServerMessage {
-  type: "board_update" | "cursor_move" | "user_joined" | "user_left" | "pong" | "error";
+  type: ServerEventType;
   boardId: string;
   userId?: string;
+  // For USER_JOINED: { username: string, color: string }
+  // For USER_LEFT: { username?: string }
+  // For BOARD_UPDATE: full board data (e.g. { elements: [...] })
+  // For CURSOR_UPDATE: { x: number, y: number, username?: string, color?: string }
   data?: any;
   timestamp: number;
 }

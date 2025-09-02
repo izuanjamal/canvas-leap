@@ -15,18 +15,18 @@ interface BoardSyncHandshake {
 
 // Handles real-time collaboration for whiteboard sessions via WebSocket connection.
 export const boardSync = api.streamInOut<BoardSyncHandshake, ClientMessage, ServerMessage>(
-  { expose: true, path: "/ws/board/:boardId" },
+  { expose: true, path: "/ws/:boardId" },
   async (handshake, stream) => {
-    const { boardId, userId, username, color = '#3B82F6' } = handshake;
-    
+    const { boardId, userId, username, color = "#3B82F6" } = handshake;
+
     // Initialize board connections set if it doesn't exist
     if (!boardConnections.has(boardId)) {
       boardConnections.set(boardId, new Set());
     }
-    
+
     const connections = boardConnections.get(boardId)!;
     connections.add(stream);
-    
+
     // Store session data for this connection
     const session: BoardSession = {
       boardId,
@@ -36,26 +36,29 @@ export const boardSync = api.streamInOut<BoardSyncHandshake, ClientMessage, Serv
       lastSeen: new Date(),
     };
     sessionData.set(stream, session);
-    
+
     // Create or update session in database
     await boardDB.exec`
       INSERT INTO sessions (board_id, user_id, connected_at, last_seen)
       VALUES (${boardId}, ${userId}, NOW(), NOW())
-      ON CONFLICT (board_id, user_id) 
+      ON CONFLICT (board_id, user_id)
       DO UPDATE SET last_seen = NOW()
     `;
-    
+
     // Broadcast user joined message to other clients
     const joinMessage: ServerMessage = {
-      type: "user_joined",
+      type: "USER_JOINED",
       boardId,
       userId,
       data: { username, color },
       timestamp: Date.now(),
     };
-    
+
     await broadcastToBoard(boardId, joinMessage, stream);
-    
+
+    // Heartbeat: update last_seen every 10 seconds
+    const heartbeat = startHeartbeat(stream, session);
+
     try {
       // Listen for incoming messages from this client
       for await (const message of stream) {
@@ -64,11 +67,38 @@ export const boardSync = api.streamInOut<BoardSyncHandshake, ClientMessage, Serv
     } catch (error) {
       console.error(`WebSocket error for user ${userId} on board ${boardId}:`, error);
     } finally {
+      clearInterval(heartbeat);
       // Clean up when connection closes
       await cleanupConnection(stream, session);
     }
   }
 );
+
+// Periodically update last_seen for presence
+function startHeartbeat(
+  stream: StreamInOut<ClientMessage, ServerMessage>,
+  session: BoardSession
+): NodeJS.Timer {
+  return setInterval(async () => {
+    try {
+      session.lastSeen = new Date();
+      await boardDB.exec`
+        UPDATE sessions
+        SET last_seen = NOW()
+        WHERE board_id = ${session.boardId} AND user_id = ${session.userId}
+      `;
+      // Optionally echo pong to client as a keep-alive signal.
+      const pong: ServerMessage = {
+        type: "PONG",
+        boardId: session.boardId,
+        timestamp: Date.now(),
+      };
+      await stream.send(pong);
+    } catch (err) {
+      // ignore errors; if stream is dead cleanup will remove it
+    }
+  }, 10_000);
+}
 
 // Processes incoming messages from clients and broadcasts updates to other connected users.
 async function handleClientMessage(
@@ -77,27 +107,27 @@ async function handleClientMessage(
   session: BoardSession
 ): Promise<void> {
   const { type, boardId, userId, data, timestamp } = message;
-  
+
   // Update last seen timestamp
   session.lastSeen = new Date();
   await boardDB.exec`
-    UPDATE sessions 
-    SET last_seen = NOW() 
+    UPDATE sessions
+    SET last_seen = NOW()
     WHERE board_id = ${boardId} AND user_id = ${userId}
   `;
-  
+
   switch (type) {
-    case "board_update":
+    case "BOARD_UPDATE": {
       // Save board data to database
       await boardDB.exec`
-        UPDATE boards 
+        UPDATE boards
         SET data = ${JSON.stringify(data)}
         WHERE id = ${boardId}
       `;
-      
+
       // Broadcast update to other clients
       const updateMessage: ServerMessage = {
-        type: "board_update",
+        type: "BOARD_UPDATE",
         boardId,
         userId,
         data,
@@ -105,29 +135,42 @@ async function handleClientMessage(
       };
       await broadcastToBoard(boardId, updateMessage, senderStream);
       break;
-      
-    case "cursor_move":
+    }
+
+    case "CURSOR_UPDATE": {
       // Broadcast cursor movement to other clients (don't save to DB)
       const cursorMessage: ServerMessage = {
-        type: "cursor_move",
+        type: "CURSOR_UPDATE",
         boardId,
         userId,
-        data,
+        data: { ...data, username: session.username, color: session.color },
         timestamp,
       };
       await broadcastToBoard(boardId, cursorMessage, senderStream);
       break;
-      
-    case "ping":
-      // Respond with pong to keep connection alive
+    }
+
+    case "USER_LEAVE": {
+      await cleanupConnection(senderStream, session);
+      break;
+    }
+
+    case "USER_JOIN": {
+      // Already handled by handshake; ignore or re-broadcast as needed
+      break;
+    }
+
+    case "PING": {
+      // Respond with PONG to keep connection alive
       const pongMessage: ServerMessage = {
-        type: "pong",
+        type: "PONG",
         boardId,
         timestamp: Date.now(),
       };
       await senderStream.send(pongMessage);
       break;
-      
+    }
+
     default:
       console.warn(`Unknown message type: ${type}`);
   }
@@ -141,12 +184,12 @@ async function broadcastToBoard(
 ): Promise<void> {
   const connections = boardConnections.get(boardId);
   if (!connections) return;
-  
+
   const deadConnections: StreamInOut<ClientMessage, ServerMessage>[] = [];
-  
+
   for (const connection of connections) {
     if (connection === excludeStream) continue;
-    
+
     try {
       await connection.send(message);
     } catch (error) {
@@ -154,7 +197,7 @@ async function broadcastToBoard(
       deadConnections.push(connection);
     }
   }
-  
+
   // Clean up dead connections
   for (const deadConnection of deadConnections) {
     connections.delete(deadConnection);
@@ -171,35 +214,35 @@ async function cleanupConnection(
   session: BoardSession
 ): Promise<void> {
   const { boardId, userId, username } = session;
-  
+
   // Remove from active connections
   const connections = boardConnections.get(boardId);
   if (connections) {
     connections.delete(stream);
-    
+
     // Remove empty board connection sets
     if (connections.size === 0) {
       boardConnections.delete(boardId);
     }
   }
-  
+
   // Remove session data
   sessionData.delete(stream);
-  
+
   // Remove from database
   await boardDB.exec`
-    DELETE FROM sessions 
+    DELETE FROM sessions
     WHERE board_id = ${boardId} AND user_id = ${userId}
   `;
-  
+
   // Broadcast user left message
   const leaveMessage: ServerMessage = {
-    type: "user_left",
+    type: "USER_LEFT",
     boardId,
     userId,
     data: { username },
     timestamp: Date.now(),
   };
-  
+
   await broadcastToBoard(boardId, leaveMessage);
 }

@@ -6,6 +6,7 @@ import { Topbar } from "./components/Topbar";
 import { useCanvasStore } from "./state/canvasStore";
 import { loadInitialBoard } from "./services/boardLoader";
 import { initialBoardId } from "./config";
+import { useRealtimeSync } from "./hooks/useRealtimeSync";
 
 // App is the root component for CanvasLeap's frontend.
 export default function App() {
@@ -27,14 +28,10 @@ export default function App() {
     };
   }, [setBoard]);
 
-  // Placeholder live cursors (static demo data for now).
-  useEffect(() => {
-    const cursors = [
-      { id: "u-1", x: 300, y: 200, color: "#3B82F6", name: "Alex" },
-      { id: "u-2", x: 800, y: 600, color: "#10B981", name: "Sam" },
-    ];
-    setCursors(cursors);
-  }, [setCursors]);
+  // Initialize realtime sync (connects after board is loaded and local user created)
+  useRealtimeSync();
+
+  // Placeholder live cursors removed; realtime will set presence.
 
   const appTitle = useMemo(() => boardName || "CanvasLeap", [boardName]);
 

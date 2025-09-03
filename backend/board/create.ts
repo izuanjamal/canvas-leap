@@ -4,18 +4,18 @@ import type { CreateBoardRequest, Board } from "./types";
 import { getAuthData } from "~encore/auth";
 
 // Creates a new whiteboard with a title.
+// If the title is empty, an automatic title is generated.
 export const create = api<CreateBoardRequest, Board>(
   { expose: true, method: "POST", path: "/boards", auth: true },
   async (req) => {
-    if (!req.title || !req.title.trim()) {
-      throw APIError.invalidArgument("title is required");
-    }
-
     const auth = getAuthData()!;
+
+    const rawTitle = (req.title ?? "").trim();
+    const title = rawTitle.length > 0 ? rawTitle : "Untitled Board";
 
     const board = await boardDB.queryRow<Board>`
       INSERT INTO boards (title, owner_id, data)
-      VALUES (${req.title.trim()}, ${auth.userID}, ${JSON.stringify({})})
+      VALUES (${title}, ${auth.userID}, ${JSON.stringify({})})
       RETURNING
         id,
         COALESCE(title, name) AS title,

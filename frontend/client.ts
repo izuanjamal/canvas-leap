@@ -203,6 +203,7 @@ export namespace auth {
 import { create as api_board_create_create } from "~backend/board/create";
 import { createStroke as api_board_create_stroke_createStroke } from "~backend/board/create_stroke";
 import { createUser as api_board_create_user_createUser } from "~backend/board/create_user";
+import { deleteBoard as api_board_delete_deleteBoard } from "~backend/board/delete";
 import { get as api_board_get_get } from "~backend/board/get";
 import { getShared as api_board_get_shared_getShared } from "~backend/board/get_shared";
 import { list as api_board_list_list } from "~backend/board/list";
@@ -221,6 +222,7 @@ export namespace board {
             this.create = this.create.bind(this)
             this.createStroke = this.createStroke.bind(this)
             this.createUser = this.createUser.bind(this)
+            this.deleteBoard = this.deleteBoard.bind(this)
             this.get = this.get.bind(this)
             this.getShared = this.getShared.bind(this)
             this.list = this.list.bind(this)
@@ -232,6 +234,7 @@ export namespace board {
 
         /**
          * Creates a new whiteboard with a title.
+         * If the title is empty, an automatic title is generated.
          */
         public async create(params: RequestType<typeof api_board_create_create>): Promise<ResponseType<typeof api_board_create_create>> {
             // Now make the actual call to the API
@@ -259,6 +262,13 @@ export namespace board {
         }
 
         /**
+         * Deletes a board. Only the owner can delete a board.
+         */
+        public async deleteBoard(params: { id: string }): Promise<void> {
+            await this.baseClient.callTypedAPI(`/boards/${encodeURIComponent(params.id)}`, {method: "DELETE", body: undefined})
+        }
+
+        /**
          * Retrieves a board by its ID, including all strokes and metadata.
          * Enforces that the authenticated user must have access to the board.
          */
@@ -278,7 +288,7 @@ export namespace board {
         }
 
         /**
-         * Retrieves boards for the current user (owner or has explicit permissions), ordered by most recently created.
+         * Retrieves boards owned by the current user, ordered by most recently created.
          */
         public async list(params: RequestType<typeof api_board_list_list>): Promise<ResponseType<typeof api_board_list_list>> {
             // Convert our params into the objects we need for the request

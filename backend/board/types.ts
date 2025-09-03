@@ -23,7 +23,8 @@ export interface Stroke {
 }
 
 export interface CreateBoardRequest {
-  title: string;
+  // Optional title; if omitted or empty, a default title will be generated.
+  title?: string;
 }
 
 export interface BoardWithStrokes {

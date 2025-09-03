@@ -16,7 +16,7 @@ export function RegisterPage() {
     e.preventDefault();
     try {
       await register(email, password, displayName);
-      navigate("/", { replace: true });
+      navigate("/dashboard", { replace: true });
     } catch (err) {
       console.error("Registration failed", err);
       alert("Registration failed");

@@ -33,7 +33,7 @@ export function OAuthCallback() {
         setAuth(resp.token, resp.user);
         // Hydrate user from session cookie (ensures future requests work without header)
         await checkSession();
-        navigate("/", { replace: true });
+        navigate("/dashboard", { replace: true });
       } catch (err) {
         console.error("Google OAuth exchange failed", err);
         alert("Google login failed");

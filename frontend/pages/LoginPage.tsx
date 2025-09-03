@@ -18,7 +18,7 @@ export function LoginPage() {
     e.preventDefault();
     try {
       await login(email, password);
-      navigate("/", { replace: true });
+      navigate("/dashboard", { replace: true });
     } catch (err) {
       console.error("Login failed", err);
       alert("Login failed");

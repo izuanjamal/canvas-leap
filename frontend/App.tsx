@@ -9,6 +9,7 @@ import { BoardPage } from "./pages/BoardPage";
 import { BoardSocketProvider } from "./contexts/BoardSocketProvider";
 import { BoardsPage } from "./pages/BoardsPage";
 import { SharedBoardPage } from "./pages/SharedBoardPage";
+import { DashboardPage } from "./pages/Dashboard";
 
 // App is the root component for CanvasLeap's frontend.
 export default function App() {
@@ -29,11 +30,13 @@ export default function App() {
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/auth/callback/google" element={<OAuthCallback />} />
+            <Route path="/dashboard" element={<Protected><DashboardPage /></Protected>} />
             <Route path="/boards" element={<Protected><BoardsPage /></Protected>} />
             <Route path="/boards/:id" element={<Protected><BoardPage /></Protected>} />
+            <Route path="/board/:id" element={<Protected><BoardPage /></Protected>} />
             <Route path="/s/:token" element={<SharedBoardPage />} />
-            <Route path="/" element={<Navigate to="/boards" replace />} />
-            <Route path="*" element={<Navigate to="/boards" replace />} />
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </BoardSocketProvider>
       </BrowserRouter>
